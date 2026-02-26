@@ -166,7 +166,7 @@ class NDLOCREngine:
             line_h = int(lineobj.get("HEIGHT"))
             try:
                 pred_char_cnt = float(lineobj.get("PRED_CHAR_CNT"))
-            except:
+            except (ValueError, TypeError):
                 pred_char_cnt = 100.0
             
             if line_h > line_w:
@@ -210,7 +210,7 @@ class NDLOCREngine:
             line_h = int(lineobj.get("HEIGHT"))
             try:
                 conf = float(lineobj.get("CONF"))
-            except:
+            except (ValueError, TypeError):
                 conf = 0.0
             jsonobj = {
                 "boundingBox": [[xmin, ymin], [xmin, ymin+line_h], [xmin+line_w, ymin+line_h], [xmin+line_w, ymin]],
