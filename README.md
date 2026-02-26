@@ -79,6 +79,19 @@ uv sync
 PYTHONPATH=. uv run pytest
 ```
 
+### 負荷テストの実行
+Locustを使用した負荷テストが可能です。
+
+```bash
+# 負荷テストの実行（サーバーの起動からテスト完了まで自動で行います）
+./run_load_tests.sh
+```
+
+テスト項目:
+- `/health` への定期的なアクセス。
+- `/v1/ocr` への同期OCRリクエスト。
+- `/v1/ocr/jobs` を使用した非同期ジョブの作成とポーリング。
+
 ### プロジェクト構成
 - `src/core/engine.py`: NDLOCR-Liteをラップした推論エンジン。
 - `src/api/main.py`: FastAPIによるAPIエンドポイントとジョブ管理。
