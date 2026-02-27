@@ -34,5 +34,5 @@ class OCRJobResult(BaseModel):
     error: Optional[str] = None
 
 class OCRRequest(BaseModel):
-    image: str # Base64 encoded image
+    image: str = Field(..., max_length=15 * 1024 * 1024) # Base64 encoded image (limit 15MB)
     model: Optional[str] = "ndlocr-lite"
