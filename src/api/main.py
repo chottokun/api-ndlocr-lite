@@ -1,5 +1,6 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Body, BackgroundTasks
 from contextlib import asynccontextmanager
+import asyncio
 import io
 import uuid
 import json
@@ -81,7 +82,8 @@ async def ocr_endpoint(
         raise HTTPException(status_code=503, detail="Engine not initialized")
 
     try:
-        result = engine.ocr(img, img_name=filename)
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(None, engine.ocr, img, filename)
         # Result conversion...
         page = OCRPage(
             index=0,
