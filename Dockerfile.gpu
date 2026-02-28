@@ -1,0 +1,61 @@
+# Stage 1: Runtime environment with CUDA 12.6 and cuDNN 9
+FROM nvidia/cuda:12.6.3-cudnn-runtime-ubuntu22.04
+
+WORKDIR /app
+
+# Install system dependencies (minimal)
+RUN apt-get update && apt-get install -y \
+    libgl1 \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    libgomp1 \
+    curl \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install uv (modern python manager)
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+# Use uv to install a standalone Python 3.12 
+# (avoids system python dependency and GLIBC mismatch)
+RUN uv python install 3.12
+
+# Create a venv at /opt/venv for security and to avoid volume mount overwrite
+RUN uv venv --python 3.12 /opt/venv
+
+# Set environment to use the venv
+ENV VIRTUAL_ENV=/opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+ENV PYTHONPATH="/app:/app/extern/ndlocr-lite/src"
+
+# Copy the project files
+COPY . .
+
+# Install dependencies into /opt/venv using uv pip
+# We pin onnxruntime-gpu specifically for CUDA 12 support
+RUN uv pip install \
+    "dill==0.3.8" \
+    "fastapi>=0.133.1" \
+    "lxml==5.4.0" \
+    "networkx==3.3" \
+    "numpy==2.2.2" \
+    "ordered-set==4.1.0" \
+    "pillow==12.1.1" \
+    "protobuf==6.31.1" \
+    "pyparsing==3.1.2" \
+    "pypdfium2==4.30.0" \
+    "python-multipart>=0.0.22" \
+    "pyyaml==6.0.1" \
+    "reportlab==4.2.5" \
+    "tqdm==4.66.4" \
+    "uvicorn>=0.41.0" \
+    "onnxruntime-gpu>=1.19.0"
+
+# Expose API port
+EXPOSE 8000
+
+# Run the application directly from the venv
+# worker=1 to avoid VRAM over-allocation
+CMD ["python3", "-m", "uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
