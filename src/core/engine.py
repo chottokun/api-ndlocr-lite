@@ -3,6 +3,7 @@ import os
 import numpy as np
 from PIL import Image
 import xml.etree.ElementTree as ET
+import xml.sax.saxutils as saxutils
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 import time
@@ -149,8 +150,9 @@ class NDLOCREngine:
             if det["class_index"] == 0:
                 resultobj[0][0].append([xmin, ymin, xmax, ymax])
             resultobj[1][det["class_index"]].append([xmin, ymin, xmax, ymax, conf])
-            
-        xmlstr = convert_to_xml_string3(img_w, img_h, img_name, classeslist, resultobj)
+
+        escaped_img_name = saxutils.escape(img_name, {'"': "&quot;", "'": "&apos;"})
+        xmlstr = convert_to_xml_string3(img_w, img_h, escaped_img_name, classeslist, resultobj)
         xmlstr = "<OCRDATASET>" + xmlstr + "</OCRDATASET>"
         root = ET.fromstring(xmlstr)
         eval_xml(root, logger=None)
