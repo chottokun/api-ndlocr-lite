@@ -7,6 +7,7 @@ import json
 from PIL import Image
 import base64
 from typing import List, Optional, Dict, Any
+import os
 
 from src.core.engine import NDLOCREngine
 from src.schemas.ocr import OCRResponse, OCRPage, OCRLine, OCRRequest, OCRJobResponse, OCRJobResult
@@ -17,9 +18,9 @@ engine: Optional[NDLOCREngine] = None
 jobs: Dict[str, OCRJobResult] = {}
 
 # Security limits
-MAX_IMAGE_SIZE = 10 * 1024 * 1024 # 10MB
-MAX_BODY_SIZE = 15 * 1024 * 1024  # 15MB
-MAX_PIXELS = 100_000_000         # 100MP
+MAX_IMAGE_SIZE = int(os.getenv("MAX_IMAGE_SIZE", 10 * 1024 * 1024)) # Default 10MB
+MAX_BODY_SIZE = int(os.getenv("MAX_BODY_SIZE", 15 * 1024 * 1024))   # Default 15MB
+MAX_PIXELS = int(os.getenv("MAX_PIXELS", 100_000_000))            # Default 100MP
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

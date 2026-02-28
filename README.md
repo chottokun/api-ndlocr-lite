@@ -34,6 +34,14 @@ docker-compose up --build
 ```
 サーバーが起動すると、`http://localhost:8000` でAPIが利用可能になります。
 
+### 3. 環境設定
+セキュリティ制限などの設定は環境変数で行うことができます。詳細は `.env.sample` を参照してください。
+
+```bash
+cp .env.sample .env
+# 必要に応じて .env を編集
+```
+
 ---
 
 ## API の利用方法
@@ -92,10 +100,36 @@ Locustを使用した負荷テストが可能です。
 - `/v1/ocr` への同期OCRリクエスト。
 - `/v1/ocr/jobs` を使用した非同期ジョブの作成とポーリング。
 
+### テスト用UI (Streamlit)
+Streamlitを使用した簡易的なテスト用UIを内蔵しています。ブラウザ上で画像をアップロードし、OCR結果をインタラクティブに確認できます。
+
+```bash
+# 依存関係のインストール（初回のみ）
+uv sync
+
+# テストUIの起動
+uv run streamlit run streamlit_app.py
+```
+
+ブラウザで `http://localhost:8501` にアクセスすると、以下の機能が利用できます：
+- **同期OCR**: 画像をアップロードして即座に結果を取得
+- **非同期ジョブ**: ジョブを作成し、ポーリングで結果を確認
+- **ヘルスチェック**: サイドバーからAPIの稼働状況を確認
+
+> **注意**: APIサーバー（Docker Compose）が起動している必要があります。デフォルトのAPI URLは `http://localhost:8001` です。
+
+### セキュリティ制限
+APIの安定稼働のため、デフォルトで以下の制限が設定されています。これらは環境変数で変更可能です。
+
+- **MAX_IMAGE_SIZE**: アップロード可能な画像サイズ（初期値: 10MB）
+- **MAX_BODY_SIZE**: リクエストボディの最大サイズ（初期値: 15MB）
+- **MAX_PIXELS**: 画像の最大画素数（初期値: 100MP）
+
 ### プロジェクト構成
 - `src/core/engine.py`: NDLOCR-Liteをラップした推論エンジン。
 - `src/api/main.py`: FastAPIによるAPIエンドポイントとジョブ管理。
 - `src/schemas/ocr.py`: Pydanticによるリクエスト・レスポンスのスキーマ定義。
+- `streamlit_app.py`: Streamlitによるテスト用UIアプリケーション。
 - `extern/ndlocr-lite`: 本体のOCRエンジン（Git Submodule）。
 
 ---
