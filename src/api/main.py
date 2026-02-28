@@ -4,6 +4,8 @@ import asyncio
 import io
 import uuid
 import json
+import binascii
+import PIL
 from PIL import Image
 import base64
 from typing import List, Optional, Dict, Any
@@ -157,6 +159,8 @@ async def _get_image_from_request(request: Request, file: Optional[UploadFile]):
             filename = "base64_image.jpg"
         except HTTPException:
             raise
+        except (binascii.Error, PIL.UnidentifiedImageError, ValueError) as e:
+            raise HTTPException(status_code=400, detail=f"Invalid request: {str(e)}")
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Invalid request: {str(e)}")
     
