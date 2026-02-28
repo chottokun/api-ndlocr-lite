@@ -103,12 +103,14 @@ Locustを使用した負荷テストが可能です。
 ### テスト用UI (Streamlit)
 Streamlitを使用した簡易的なテスト用UIを内蔵しています。ブラウザ上で画像をアップロードし、OCR結果をインタラクティブに確認できます。
 
+UIを起動するには、Dockerとは別にローカル環境で立ち上げることを推奨します（.venvの権限問題を避けるため）。
+
 ```bash
 # 依存関係のインストール（初回のみ）
 uv sync
 
-# テストUIの起動
-uv run streamlit run streamlit_app.py
+# テストUIの起動（バックグラウンド等で）
+uv run streamlit run streamlit_app.py --server.port 8501
 ```
 
 ブラウザで `http://localhost:8501` にアクセスすると、以下の機能が利用できます：
