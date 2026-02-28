@@ -29,6 +29,8 @@ async def lifespan(app: FastAPI):
     engine = NDLOCREngine(device="cpu")
     yield
     print("[INFO] Shutting down...")
+    if engine is not None:
+        engine.shutdown()
     engine = None
 
 app = FastAPI(title="NDLOCR-Lite API", lifespan=lifespan)
