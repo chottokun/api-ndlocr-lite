@@ -79,3 +79,9 @@ def test_ocr_job_workflow(sample_image_path):
             time.sleep(1)
         
         assert completed, "Job did not complete in time"
+
+def test_get_non_existent_job():
+    with TestClient(app) as client:
+        response = client.get("/v1/ocr/jobs/non-existent-id")
+        assert response.status_code == 404
+        assert response.json()["detail"] == "Job not found"
