@@ -100,6 +100,24 @@ Locustを使用した負荷テストが可能です。
 - `/v1/ocr` への同期OCRリクエスト。
 - `/v1/ocr/jobs` を使用した非同期ジョブの作成とポーリング。
 
+### テスト用UI (Streamlit)
+Streamlitを使用した簡易的なテスト用UIを内蔵しています。ブラウザ上で画像をアップロードし、OCR結果をインタラクティブに確認できます。
+
+```bash
+# 依存関係のインストール（初回のみ）
+uv sync
+
+# テストUIの起動
+uv run streamlit run streamlit_app.py
+```
+
+ブラウザで `http://localhost:8501` にアクセスすると、以下の機能が利用できます：
+- **同期OCR**: 画像をアップロードして即座に結果を取得
+- **非同期ジョブ**: ジョブを作成し、ポーリングで結果を確認
+- **ヘルスチェック**: サイドバーからAPIの稼働状況を確認
+
+> **注意**: APIサーバー（Docker Compose）が起動している必要があります。デフォルトのAPI URLは `http://localhost:8001` です。
+
 ### セキュリティ制限
 APIの安定稼働のため、デフォルトで以下の制限が設定されています。これらは環境変数で変更可能です。
 
@@ -111,6 +129,7 @@ APIの安定稼働のため、デフォルトで以下の制限が設定され�
 - `src/core/engine.py`: NDLOCR-Liteをラップした推論エンジン。
 - `src/api/main.py`: FastAPIによるAPIエンドポイントとジョブ管理。
 - `src/schemas/ocr.py`: Pydanticによるリクエスト・レスポンスのスキーマ定義。
+- `streamlit_app.py`: Streamlitによるテスト用UIアプリケーション。
 - `extern/ndlocr-lite`: 本体のOCRエンジン（Git Submodule）。
 
 ---
