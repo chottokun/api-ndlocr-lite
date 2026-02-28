@@ -5,7 +5,6 @@ from PIL import Image
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import List, Dict, Any, Optional
-import time
 from concurrent.futures import ThreadPoolExecutor
 from yaml import safe_load
 
