@@ -59,7 +59,7 @@ with tab1:
         st.caption(f"File: {uploaded_file.name} / Size: {len(file_bytes)} bytes / Type: {uploaded_file.type}")
         
         try:
-            st.image(file_bytes, caption="Uploaded Image", use_container_width=True)
+            st.image(file_bytes, caption="Uploaded Image", width="stretch")
         except Exception as e:
             st.warning(f"Image preview failed: {e}")
         
@@ -91,7 +91,7 @@ with tab2:
         st.caption(f"File: {job_file.name} / Size: {len(job_bytes)} bytes / Type: {job_file.type}")
         
         try:
-            st.image(job_bytes, caption="Uploaded Image", use_container_width=True)
+            st.image(job_bytes, caption="Uploaded Image", width="stretch")
         except Exception as e:
             st.warning(f"Image preview failed: {e}")
         

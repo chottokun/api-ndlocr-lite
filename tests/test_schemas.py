@@ -1,7 +1,6 @@
 import pytest
 from pydantic import ValidationError
 from src.schemas.ocr import (
-    OCRBoundingBox,
     OCRLine,
     OCRPage,
     OCRResponse,
@@ -9,20 +8,6 @@ from src.schemas.ocr import (
     OCRJobResult,
     OCRRequest
 )
-
-def test_ocr_bounding_box():
-    # Valid data
-    valid_points = [[0.0, 0.0], [0.0, 10.0], [10.0, 10.0], [10.0, 0.0]]
-    bbox = OCRBoundingBox(points=valid_points)
-    assert bbox.points == valid_points
-
-    # Invalid data - not a list
-    with pytest.raises(ValidationError):
-        OCRBoundingBox(points="invalid")
-
-    # Invalid data - nested list with wrong types
-    with pytest.raises(ValidationError):
-        OCRBoundingBox(points=[["a", "b"]])
 
 def test_ocr_line():
     # Valid data
