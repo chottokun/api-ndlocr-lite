@@ -63,6 +63,11 @@ class NDLOCREngine:
         self.recognizer30 = None
         self.recognizer50 = None
         
+        self.executor = ThreadPoolExecutor(
+            max_workers=os.cpu_count() or 4,
+            thread_name_prefix="ocr_worker"
+        )
+
         self._load_models()
 
     def _load_models(self):
@@ -87,6 +92,9 @@ class NDLOCREngine:
         charlist = list(charobj["model"]["charset_train"])
         return PARSEQ(model_path=weights_path, charlist=charlist, device=self.device)
 
+    def shutdown(self):
+        self.executor.shutdown()
+
     def _process_cascade(self, alllineobj: List[RecogLine], is_cascade: bool = True) -> List[str]:
         targetdflist30 = []
         targetdflist50 = []
@@ -100,36 +108,35 @@ class NDLOCREngine:
                 targetdflist100.append(lineobj)
         
         targetdflistall = []
-        with ThreadPoolExecutor(thread_name_prefix="thread") as executor:
-            if len(targetdflist30) > 0:
-                resultlines30 = list(executor.map(self.recognizer30.read, [t.npimg for t in targetdflist30]))
-                for i, pred_str in enumerate(resultlines30):
-                    lineobj = targetdflist30[i]
-                    if len(pred_str) >= 25:
-                        targetdflist50.append(lineobj)
-                    else:
-                        lineobj.pred_str = pred_str
-                        targetdflistall.append(lineobj)
-            
-            if len(targetdflist50) > 0:
-                resultlines50 = list(executor.map(self.recognizer50.read, [t.npimg for t in targetdflist50]))
-                for i, pred_str in enumerate(resultlines50):
-                    lineobj = targetdflist50[i]
-                    if len(pred_str) >= 45:
-                        targetdflist100.append(lineobj)
-                    else:
-                        lineobj.pred_str = pred_str
-                        targetdflistall.append(lineobj)
-            
-            if len(targetdflist100) > 0:
-                resultlines100 = list(executor.map(self.recognizer100.read, [t.npimg for t in targetdflist100]))
-                for i, pred_str in enumerate(resultlines100):
-                    lineobj = targetdflist100[i]
+        if len(targetdflist30) > 0:
+            resultlines30 = list(self.executor.map(self.recognizer30.read, [t.npimg for t in targetdflist30]))
+            for i, pred_str in enumerate(resultlines30):
+                lineobj = targetdflist30[i]
+                if len(pred_str) >= 25:
+                    targetdflist50.append(lineobj)
+                else:
                     lineobj.pred_str = pred_str
                     targetdflistall.append(lineobj)
+
+        if len(targetdflist50) > 0:
+            resultlines50 = list(self.executor.map(self.recognizer50.read, [t.npimg for t in targetdflist50]))
+            for i, pred_str in enumerate(resultlines50):
+                lineobj = targetdflist50[i]
+                if len(pred_str) >= 45:
+                    targetdflist100.append(lineobj)
+                else:
+                    lineobj.pred_str = pred_str
+                    targetdflistall.append(lineobj)
+
+        if len(targetdflist100) > 0:
+            resultlines100 = list(self.executor.map(self.recognizer100.read, [t.npimg for t in targetdflist100]))
+            for i, pred_str in enumerate(resultlines100):
+                lineobj = targetdflist100[i]
+                lineobj.pred_str = pred_str
+                targetdflistall.append(lineobj)
                     
-            targetdflistall = sorted(targetdflistall)
-            return [t.pred_str for t in targetdflistall]
+        targetdflistall = sorted(targetdflistall)
+        return [t.pred_str for t in targetdflistall]
 
     def ocr(self, pil_image: Image.Image, img_name: str = "image.jpg") -> Dict[str, Any]:
         img = np.array(pil_image.convert('RGB'))
@@ -150,7 +157,9 @@ class NDLOCREngine:
                 resultobj[0][0].append([xmin, ymin, xmax, ymax])
             resultobj[1][det["class_index"]].append([xmin, ymin, xmax, ymax, conf])
             
-        xmlstr = convert_to_xml_string3(img_w, img_h, img_name, classeslist, resultobj)
+        # Security: Sanitize img_name to prevent XML injection
+        safe_img_name = "".join(c for c in img_name if c.isalnum() or c in "._- ")
+        xmlstr = convert_to_xml_string3(img_w, img_h, safe_img_name, classeslist, resultobj)
         xmlstr = "<OCRDATASET>" + xmlstr + "</OCRDATASET>"
         root = ET.fromstring(xmlstr)
         eval_xml(root, logger=None)
