@@ -1,10 +1,6 @@
 from pydantic import BaseModel, Field
 from typing import List, Optional, Any, Dict
 
-class OCRBoundingBox(BaseModel):
-    # [[xmin, ymin], [xmin, ymax], [xmax, ymax], [xmax, ymin]]
-    points: List[List[float]] = Field(..., description="Coordinates of the bounding box")
-
 class OCRLine(BaseModel):
     id: int
     text: str
