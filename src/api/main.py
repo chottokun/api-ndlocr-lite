@@ -17,6 +17,23 @@ engine: Optional[NDLOCREngine] = None
 # In-memory job store
 jobs: Dict[str, OCRJobResult] = {}
 
+def _engine_result_to_ocr_page(result: Dict[str, Any], index: int = 0) -> OCRPage:
+    """Helper to convert engine result to OCRPage schema."""
+    return OCRPage(
+        index=index,
+        markdown=result["text"],
+        width=result["img_info"]["width"],
+        height=result["img_info"]["height"],
+        lines=[
+            OCRLine(
+                id=l["id"],
+                text=l["text"],
+                confidence=l["confidence"],
+                boundingBox=l["boundingBox"]
+            ) for l in result["lines"]
+        ]
+    )
+
 # Security limits
 MAX_IMAGE_SIZE = int(os.getenv("MAX_IMAGE_SIZE", 10 * 1024 * 1024)) # Default 10MB
 MAX_BODY_SIZE = int(os.getenv("MAX_BODY_SIZE", 15 * 1024 * 1024))   # Default 15MB
@@ -46,20 +63,7 @@ def process_ocr_job(job_id: str, img: Image.Image, filename: str):
         jobs[job_id].status = "processing"
         result = engine.ocr(img, img_name=filename)
         
-        page = OCRPage(
-            index=0,
-            markdown=result["text"],
-            width=result["img_info"]["width"],
-            height=result["img_info"]["height"],
-            lines=[
-                OCRLine(
-                    id=l["id"],
-                    text=l["text"],
-                    confidence=l["confidence"],
-                    boundingBox=l["boundingBox"]
-                ) for l in result["lines"]
-            ]
-        )
+        page = _engine_result_to_ocr_page(result)
         
         jobs[job_id].result = OCRResponse(
             model="ndlocr-lite",
@@ -87,21 +91,8 @@ async def ocr_endpoint(
     try:
         loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(None, engine.ocr, img, filename)
-        # Result conversion...
-        page = OCRPage(
-            index=0,
-            markdown=result["text"],
-            width=result["img_info"]["width"],
-            height=result["img_info"]["height"],
-            lines=[
-                OCRLine(
-                    id=l["id"],
-                    text=l["text"],
-                    confidence=l["confidence"],
-                    boundingBox=l["boundingBox"]
-                ) for l in result["lines"]
-            ]
-        )
+
+        page = _engine_result_to_ocr_page(result)
         return OCRResponse(model="ndlocr-lite", pages=[page], usage={"pages": 1})
     except Exception as e:
         import traceback
