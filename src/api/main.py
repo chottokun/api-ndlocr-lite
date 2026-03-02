@@ -71,7 +71,7 @@ def process_ocr_job(job_id: str, img: Image.Image, filename: str):
         import traceback
         traceback.print_exc()
         jobs[job_id].status = "failed"
-        jobs[job_id].error = str(e)
+        jobs[job_id].error = "An internal error occurred during OCR processing"
 
 @app.post("/v1/ocr", response_model=OCRResponse)
 async def ocr_endpoint(
@@ -104,7 +104,9 @@ async def ocr_endpoint(
         )
         return OCRResponse(model="ndlocr-lite", pages=[page], usage={"pages": 1})
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail="An internal error occurred during OCR processing")
 
 @app.post("/v1/ocr/jobs", response_model=OCRJobResponse)
 async def create_ocr_job(

@@ -63,7 +63,10 @@ class NDLOCREngine:
         self.recognizer30 = None
         self.recognizer50 = None
         
-        self.executor = ThreadPoolExecutor(thread_name_prefix="thread")
+        self.executor = ThreadPoolExecutor(
+            max_workers=os.cpu_count() or 4,
+            thread_name_prefix="ocr_worker"
+        )
 
         self._load_models()
 
@@ -154,7 +157,9 @@ class NDLOCREngine:
                 resultobj[0][0].append([xmin, ymin, xmax, ymax])
             resultobj[1][det["class_index"]].append([xmin, ymin, xmax, ymax, conf])
             
-        xmlstr = convert_to_xml_string3(img_w, img_h, img_name, classeslist, resultobj)
+        # Security: Sanitize img_name to prevent XML injection
+        safe_img_name = "".join(c for c in img_name if c.isalnum() or c in "._- ")
+        xmlstr = convert_to_xml_string3(img_w, img_h, safe_img_name, classeslist, resultobj)
         xmlstr = "<OCRDATASET>" + xmlstr + "</OCRDATASET>"
         root = ET.fromstring(xmlstr)
         eval_xml(root, logger=None)
