@@ -164,8 +164,6 @@ class NDLOCREngine:
         eval_xml(root, logger=None)
         
         alllineobj = []
-        tatelinecnt = 0
-        alllinecnt = 0
         
         for idx, lineobj in enumerate(root.findall(".//LINE")):
             xmin = int(lineobj.get("X"))
@@ -177,9 +175,6 @@ class NDLOCREngine:
             except (ValueError, TypeError):
                 pred_char_cnt = 100.0
             
-            if line_h > line_w:
-                tatelinecnt += 1
-            alllinecnt += 1
             lineimg = img[ymin:ymin+line_h, xmin:xmin+line_w, :]
             alllineobj.append(RecogLine(lineimg, idx, pred_char_cnt))
 
@@ -200,9 +195,6 @@ class NDLOCREngine:
                     line_elem.set("CONF", f"{det['confidence']:0.3f}")
                     pred_char_cnt = det.get("pred_char_count", 100.0)
                     line_elem.set("PRED_CHAR_CNT", f"{pred_char_cnt:0.3f}")
-                    if line_h > line_w:
-                        tatelinecnt += 1
-                    alllinecnt += 1
                     lineimg = img[int(ymin):int(ymax), int(xmin):int(xmax), :]
                     alllineobj.append(RecogLine(lineimg, idx, pred_char_cnt))
 
@@ -229,11 +221,6 @@ class NDLOCREngine:
             resjsonarray.append(jsonobj)
             
         full_text = "\n".join(resultlinesall)
-        if alllinecnt > 0 and tatelinecnt / alllinecnt > 0.5:
-            # Reverse order for vertical text if needed? Original code does this:
-            # alltextlist=alltextlist[::-1]
-            # But here we only have one "page" at a time in this method
-            pass
 
         return {
             "text": full_text,
