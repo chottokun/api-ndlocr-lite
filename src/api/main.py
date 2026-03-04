@@ -126,10 +126,16 @@ async def _get_image_from_request(request: Request, file: Optional[UploadFile]):
     img = None
     filename = "image.jpg"
     if file:
-        contents = await file.read(MAX_IMAGE_SIZE + 1)
-        if len(contents) > MAX_IMAGE_SIZE:
+        # Check file size without reading everything into memory
+        file.file.seek(0, os.SEEK_END)
+        file_size = file.file.tell()
+        await file.seek(0)
+
+        if file_size > MAX_IMAGE_SIZE:
             raise HTTPException(status_code=413, detail="File too large")
-        img = Image.open(io.BytesIO(contents))
+
+        # Open image directly from the spooled file
+        img = Image.open(file.file)
         filename = file.filename or "uploaded_image.jpg"
     else:
         try:
@@ -137,16 +143,16 @@ async def _get_image_from_request(request: Request, file: Optional[UploadFile]):
             if cl and int(cl) > MAX_BODY_SIZE:
                 raise HTTPException(status_code=413, detail="Request body too large")
 
-            body_bytes = b""
+            body_accum = bytearray()
             async for chunk in request.stream():
-                body_bytes += chunk
-                if len(body_bytes) > MAX_BODY_SIZE:
+                body_accum.extend(chunk)
+                if len(body_accum) > MAX_BODY_SIZE:
                     raise HTTPException(status_code=413, detail="Request body too large")
 
-            if not body_bytes:
+            if not body_accum:
                 raise HTTPException(status_code=400, detail="Empty request body")
 
-            body = json.loads(body_bytes)
+            body = json.loads(body_accum)
             ocr_req = OCRRequest(**body)
             header, encoded = ocr_req.image.split(",", 1) if "," in ocr_req.image else (None, ocr_req.image)
             contents = base64.b64decode(encoded)
