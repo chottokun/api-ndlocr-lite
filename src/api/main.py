@@ -10,9 +10,14 @@ from PIL import Image
 import base64
 from typing import List, Optional, Dict, Any
 import os
+import logging
 
 from src.core.engine import NDLOCREngine
 from src.schemas.ocr import OCRResponse, OCRPage, OCRLine, OCRRequest, OCRJobResponse, OCRJobResult
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Global engine instance
 engine: Optional[NDLOCREngine] = None
@@ -44,10 +49,10 @@ MAX_PIXELS = int(os.getenv("MAX_PIXELS", 100_000_000))            # Default 100M
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global engine
-    print("[INFO] Initializing NDLOCR Engine...")
+    logger.info("Initializing NDLOCR Engine...")
     engine = NDLOCREngine(device="cpu")
     yield
-    print("[INFO] Shutting down...")
+    logger.info("Shutting down...")
     if engine is not None:
         engine.shutdown()
     engine = None
@@ -73,9 +78,8 @@ def process_ocr_job(job_id: str, img: Image.Image, filename: str):
             usage={"pages": 1}
         )
         jobs[job_id].status = "completed"
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
+    except Exception:
+        logger.exception("An error occurred during background OCR processing")
         jobs[job_id].status = "failed"
         jobs[job_id].error = "An internal error occurred during OCR processing"
 
@@ -96,9 +100,8 @@ async def ocr_endpoint(
 
         page = _engine_result_to_ocr_page(result)
         return OCRResponse(model="ndlocr-lite", pages=[page], usage={"pages": 1})
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
+    except Exception:
+        logger.exception("An error occurred during synchronous OCR processing")
         raise HTTPException(status_code=500, detail="An internal error occurred during OCR processing")
 
 @app.post("/v1/ocr/jobs", response_model=OCRJobResponse)
@@ -156,8 +159,9 @@ async def _get_image_from_request(request: Request, file: Optional[UploadFile]):
             raise
         except (binascii.Error, PIL.UnidentifiedImageError, ValueError) as e:
             raise HTTPException(status_code=400, detail=f"Invalid request: {str(e)}")
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Invalid request: {str(e)}")
+        except Exception:
+            logger.exception("Unexpected error while parsing image from request")
+            raise HTTPException(status_code=500, detail="An internal error occurred while processing the request")
     
     if img is None:
         raise HTTPException(status_code=400, detail="No image provided")
