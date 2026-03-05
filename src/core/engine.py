@@ -43,7 +43,7 @@ class NDLOCREngine:
         det_iou_threshold: float = 0.2,
     ):
         self.device = device
-        
+
         # Default paths
         base_dir = SUBMODULE_SRC
         self.det_weights = det_weights or str(base_dir / "model" / "deim-s-1024x1024.onnx")
@@ -52,7 +52,7 @@ class NDLOCREngine:
         self.rec_weights30 = rec_weights30 or str(base_dir / "model" / "parseq-ndl-16x256-30-tiny-192epoch-tegaki3.onnx")
         self.rec_weights50 = rec_weights50 or str(base_dir / "model" / "parseq-ndl-16x384-50-tiny-146epoch-tegaki2.onnx")
         self.rec_classes = rec_classes or str(base_dir / "config" / "NDLmoji.yaml")
-        
+
         self.det_score_threshold = det_score_threshold
         self.det_conf_threshold = det_conf_threshold
         self.det_iou_threshold = det_iou_threshold
@@ -61,7 +61,7 @@ class NDLOCREngine:
         self.recognizer100 = None
         self.recognizer30 = None
         self.recognizer50 = None
-        
+
         self.executor = ThreadPoolExecutor(
             max_workers=os.cpu_count() or 4,
             thread_name_prefix="ocr_worker"
@@ -80,7 +80,7 @@ class NDLOCREngine:
             device=self.device
         )
 
-        print(f"[INFO] Loading recognizers")
+        print("[INFO] Loading recognizers")
         self.recognizer100 = self._get_recognizer(self.rec_weights)
         self.recognizer30 = self._get_recognizer(self.rec_weights30)
         self.recognizer50 = self._get_recognizer(self.rec_weights50)
@@ -105,12 +105,11 @@ class NDLOCREngine:
                 targetdflist50.append(lineobj)
             else:
                 targetdflist100.append(lineobj)
-        
+
         targetdflistall = []
         if len(targetdflist30) > 0:
             resultlines30 = list(self.executor.map(self.recognizer30.read, [t.npimg for t in targetdflist30]))
-            for i, pred_str in enumerate(resultlines30):
-                lineobj = targetdflist30[i]
+            for pred_str, lineobj in zip(resultlines30, targetdflist30):
                 if len(pred_str) >= 25:
                     targetdflist50.append(lineobj)
                 else:
@@ -119,8 +118,7 @@ class NDLOCREngine:
 
         if len(targetdflist50) > 0:
             resultlines50 = list(self.executor.map(self.recognizer50.read, [t.npimg for t in targetdflist50]))
-            for i, pred_str in enumerate(resultlines50):
-                lineobj = targetdflist50[i]
+            for pred_str, lineobj in zip(resultlines50, targetdflist50):
                 if len(pred_str) >= 45:
                     targetdflist100.append(lineobj)
                 else:
@@ -129,22 +127,21 @@ class NDLOCREngine:
 
         if len(targetdflist100) > 0:
             resultlines100 = list(self.executor.map(self.recognizer100.read, [t.npimg for t in targetdflist100]))
-            for i, pred_str in enumerate(resultlines100):
-                lineobj = targetdflist100[i]
+            for pred_str, lineobj in zip(resultlines100, targetdflist100):
                 lineobj.pred_str = pred_str
                 targetdflistall.append(lineobj)
-                    
+
         targetdflistall = sorted(targetdflistall)
         return [t.pred_str for t in targetdflistall]
 
     def ocr(self, pil_image: Image.Image, img_name: str = "image.jpg") -> Dict[str, Any]:
         img = np.array(pil_image.convert('RGB'))
         img_h, img_w = img.shape[:2]
-        
+
         # Detection
         detections = self.detector.detect(img)
         classeslist = list(self.detector.classes.values())
-        
+
         resultobj = [dict(), dict()]
         resultobj[0][0] = list()
         for i in range(17):
@@ -155,18 +152,16 @@ class NDLOCREngine:
             if det["class_index"] == 0:
                 resultobj[0][0].append([xmin, ymin, xmax, ymax])
             resultobj[1][det["class_index"]].append([xmin, ymin, xmax, ymax, conf])
-            
+
         # Security: Sanitize img_name to prevent XML injection
         safe_img_name = "".join(c for c in img_name if c.isalnum() or c in "._- ")
         xmlstr = convert_to_xml_string3(img_w, img_h, safe_img_name, classeslist, resultobj)
         xmlstr = "<OCRDATASET>" + xmlstr + "</OCRDATASET>"
         root = ET.fromstring(xmlstr)
         eval_xml(root, logger=None)
-        
+
         alllineobj = []
-        tatelinecnt = 0
-        alllinecnt = 0
-        
+
         for idx, lineobj in enumerate(root.findall(".//LINE")):
             xmin = int(lineobj.get("X"))
             ymin = int(lineobj.get("Y"))
@@ -176,17 +171,14 @@ class NDLOCREngine:
                 pred_char_cnt = float(lineobj.get("PRED_CHAR_CNT"))
             except (ValueError, TypeError):
                 pred_char_cnt = 100.0
-            
-            if line_h > line_w:
-                tatelinecnt += 1
-            alllinecnt += 1
+
             lineimg = img[ymin:ymin+line_h, xmin:xmin+line_w, :]
             alllineobj.append(RecogLine(lineimg, idx, pred_char_cnt))
 
         # Fallback if no LINEs found but detections exist
         if len(alllineobj) == 0 and len(detections) > 0:
             page = root.find("PAGE")
-            for idx, det in enumerate(detections):
+            for det in detections:
                 xmin, ymin, xmax, ymax = det["box"]
                 line_w = int(xmax - xmin)
                 line_h = int(ymax - ymin)
@@ -200,15 +192,12 @@ class NDLOCREngine:
                     line_elem.set("CONF", f"{det['confidence']:0.3f}")
                     pred_char_cnt = det.get("pred_char_count", 100.0)
                     line_elem.set("PRED_CHAR_CNT", f"{pred_char_cnt:0.3f}")
-                    if line_h > line_w:
-                        tatelinecnt += 1
-                    alllinecnt += 1
                     lineimg = img[int(ymin):int(ymax), int(xmin):int(xmax), :]
-                    alllineobj.append(RecogLine(lineimg, idx, pred_char_cnt))
+                    alllineobj.append(RecogLine(lineimg, len(alllineobj), pred_char_cnt))
 
         # Recognition
         resultlinesall = self._process_cascade(alllineobj, is_cascade=True)
-        
+
         resjsonarray = []
         for idx, lineobj in enumerate(root.findall(".//LINE")):
             lineobj.set("STRING", resultlinesall[idx])
@@ -227,13 +216,8 @@ class NDLOCREngine:
                 "confidence": conf
             }
             resjsonarray.append(jsonobj)
-            
+
         full_text = "\n".join(resultlinesall)
-        if alllinecnt > 0 and tatelinecnt / alllinecnt > 0.5:
-            # Reverse order for vertical text if needed? Original code does this:
-            # alltextlist=alltextlist[::-1]
-            # But here we only have one "page" at a time in this method
-            pass
 
         return {
             "text": full_text,

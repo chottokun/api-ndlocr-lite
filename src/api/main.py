@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Body, BackgroundTasks
+from fastapi import FastAPI, UploadFile, File, HTTPException, Request, BackgroundTasks
 from contextlib import asynccontextmanager
 import asyncio
 import io
@@ -8,7 +8,7 @@ import binascii
 import PIL
 from PIL import Image
 import base64
-from typing import List, Optional, Dict, Any
+from typing import Optional, Dict, Any
 import os
 
 from src.core.engine import NDLOCREngine
@@ -28,11 +28,11 @@ def _engine_result_to_ocr_page(result: Dict[str, Any], index: int = 0) -> OCRPag
         height=result["img_info"]["height"],
         lines=[
             OCRLine(
-                id=l["id"],
-                text=l["text"],
-                confidence=l["confidence"],
-                boundingBox=l["boundingBox"]
-            ) for l in result["lines"]
+                id=line["id"],
+                text=line["text"],
+                confidence=line["confidence"],
+                boundingBox=line["boundingBox"]
+            ) for line in result["lines"]
         ]
     )
 
@@ -73,7 +73,7 @@ def process_ocr_job(job_id: str, img: Image.Image, filename: str):
             usage={"pages": 1}
         )
         jobs[job_id].status = "completed"
-    except Exception as e:
+    except Exception:
         import traceback
         traceback.print_exc()
         jobs[job_id].status = "failed"
@@ -96,7 +96,7 @@ async def ocr_endpoint(
 
         page = _engine_result_to_ocr_page(result)
         return OCRResponse(model="ndlocr-lite", pages=[page], usage={"pages": 1})
-    except Exception as e:
+    except Exception:
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail="An internal error occurred during OCR processing")
