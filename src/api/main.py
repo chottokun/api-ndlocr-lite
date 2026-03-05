@@ -8,7 +8,7 @@ import binascii
 import PIL
 from PIL import Image
 import base64
-from typing import List, Optional, Dict, Any
+from typing import Optional, Dict, Any
 import os
 
 from src.core.engine import NDLOCREngine
