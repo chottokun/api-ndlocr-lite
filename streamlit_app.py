@@ -3,6 +3,31 @@ import httpx
 import time
 import json
 import io
+import urllib.parse
+import os
+
+def is_valid_url(url: str) -> bool:
+    """Validate that the URL hostname is in the allowlist."""
+    try:
+        parsed = urllib.parse.urlparse(url)
+        if not parsed.scheme or not parsed.netloc:
+            return False
+
+        hostname = parsed.hostname
+        if not hostname:
+            return False
+
+        # Default allowed hosts for development and docker-compose
+        allowed_hosts = {"localhost", "127.0.0.1", "api"}
+
+        # Allow extending the allowlist via environment variable
+        env_allowed = os.getenv("ALLOWED_API_HOSTS")
+        if env_allowed:
+            allowed_hosts.update(h.strip() for h in env_allowed.split(",") if h.strip())
+
+        return hostname in allowed_hosts
+    except Exception:
+        return False
 
 st.set_page_config(
     page_title="NDLOCR-Lite Test UI",
@@ -21,6 +46,9 @@ with st.sidebar:
     st.divider()
     st.markdown("### API Health")
     if st.button("Check Health"):
+        if not is_valid_url(api_base_url):
+            st.error(f"Unauthorized API Base URL: {api_base_url}")
+            st.stop()
         try:
             response = httpx.get(f"{api_base_url}/health")
             if response.status_code == 200:
@@ -64,6 +92,9 @@ with tab1:
             st.warning(f"Image preview failed: {e}")
         
         if st.button("Run OCR", key="run_sync"):
+            if not is_valid_url(api_base_url):
+                st.error(f"Unauthorized API Base URL: {api_base_url}")
+                st.stop()
             with st.spinner("Processing..."):
                 try:
                     files = {"file": (uploaded_file.name, file_bytes, uploaded_file.type)}
@@ -96,6 +127,9 @@ with tab2:
             st.warning(f"Image preview failed: {e}")
         
         if st.button("Create Job", key="create_job"):
+            if not is_valid_url(api_base_url):
+                st.error(f"Unauthorized API Base URL: {api_base_url}")
+                st.stop()
             with st.spinner("Creating job..."):
                 try:
                     files = {"file": (job_file.name, job_bytes, job_file.type)}
@@ -112,6 +146,9 @@ with tab2:
                         
                         max_attempts = 120 # 2 minutes
                         for attempt in range(max_attempts):
+                            if not is_valid_url(api_base_url):
+                                st.error(f"Unauthorized API Base URL: {api_base_url}")
+                                break
                             status_response = httpx.get(f"{api_base_url}/v1/ocr/jobs/{job_id}")
                             if status_response.status_code == 200:
                                 job_data = status_response.json()
