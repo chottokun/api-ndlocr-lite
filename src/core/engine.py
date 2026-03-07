@@ -29,6 +29,12 @@ class RecogLine:
         return self.idx < other.idx
 
 class NDLOCREngine:
+    # Constants for cascade logic
+    CASCADE_PRED_CHAR_SMALL = 3.0
+    CASCADE_PRED_CHAR_MEDIUM = 2.0
+    CASCADE_RECOG30_MAX_LEN = 25
+    CASCADE_RECOG50_MAX_LEN = 45
+
     def __init__(
         self,
         device: str = "cpu",
@@ -99,9 +105,9 @@ class NDLOCREngine:
         targetdflist50 = []
         targetdflist100 = []
         for lineobj in alllineobj:
-            if lineobj.pred_char_cnt == 3 and is_cascade:
+            if lineobj.pred_char_cnt == self.CASCADE_PRED_CHAR_SMALL and is_cascade:
                 targetdflist30.append(lineobj)
-            elif lineobj.pred_char_cnt == 2 and is_cascade:
+            elif lineobj.pred_char_cnt == self.CASCADE_PRED_CHAR_MEDIUM and is_cascade:
                 targetdflist50.append(lineobj)
             else:
                 targetdflist100.append(lineobj)
@@ -111,7 +117,7 @@ class NDLOCREngine:
             resultlines30 = list(self.executor.map(self.recognizer30.read, [t.npimg for t in targetdflist30]))
             for i, pred_str in enumerate(resultlines30):
                 lineobj = targetdflist30[i]
-                if len(pred_str) >= 25:
+                if len(pred_str) >= self.CASCADE_RECOG30_MAX_LEN:
                     targetdflist50.append(lineobj)
                 else:
                     lineobj.pred_str = pred_str
@@ -121,7 +127,7 @@ class NDLOCREngine:
             resultlines50 = list(self.executor.map(self.recognizer50.read, [t.npimg for t in targetdflist50]))
             for i, pred_str in enumerate(resultlines50):
                 lineobj = targetdflist50[i]
-                if len(pred_str) >= 45:
+                if len(pred_str) >= self.CASCADE_RECOG50_MAX_LEN:
                     targetdflist100.append(lineobj)
                 else:
                     lineobj.pred_str = pred_str
