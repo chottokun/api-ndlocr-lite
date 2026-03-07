@@ -19,13 +19,19 @@ from src.schemas.ocr import OCRResponse, OCRPage, OCRLine, OCRRequest, OCRJobRes
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def get_engine(request: Request) -> NDLOCREngine:
-    """Dependency to get the OCR engine."""
-    return request.app.state.engine
+class InMemoryJobStore:
+    """In-memory job store for OCR results."""
+    def __init__(self):
+        self._jobs: Dict[str, OCRJobResult] = {}
 
-def get_jobs(request: Request) -> Dict[str, OCRJobResult]:
-    """Dependency to get the job store."""
-    return request.app.state.jobs
+    def get(self, job_id: str) -> Optional[OCRJobResult]:
+        return self._jobs.get(job_id)
+
+    def set(self, job_id: str, result: OCRJobResult):
+        self._jobs[job_id] = result
+
+    def exists(self, job_id: str) -> bool:
+        return job_id in self._jobs
 
 def _engine_result_to_ocr_page(result: Dict[str, Any], index: int = 0) -> OCRPage:
     """Helper to convert engine result to OCRPage schema."""
@@ -51,9 +57,9 @@ MAX_PIXELS = int(os.getenv("MAX_PIXELS", 100_000_000))            # Default 100M
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("Initializing NDLOCR Engine...")
+    logger.info("Initializing NDLOCR Engine and Job Store...")
     app.state.engine = NDLOCREngine(device="cpu")
-    app.state.jobs = {}
+    app.state.job_store = InMemoryJobStore()
     yield
     logger.info("Shutting down...")
     if hasattr(app.state, "engine") and app.state.engine is not None:
@@ -61,38 +67,42 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="NDLOCR-Lite API", lifespan=lifespan)
 
-def process_ocr_job(job_id: str, img: Image.Image, filename: str, engine: NDLOCREngine, jobs: Dict[str, OCRJobResult]):
+def process_ocr_job(job_id: str, img: Image.Image, filename: str, engine: NDLOCREngine, job_store: InMemoryJobStore):
+    job = job_store.get(job_id)
+    if job is None:
+        return
+
     if engine is None:
-        jobs[job_id].status = "failed"
-        jobs[job_id].error = "Engine not initialized"
+        job.status = "failed"
+        job.error = "Engine not initialized"
         return
 
     try:
-        jobs[job_id].status = "processing"
+        job.status = "processing"
         result = engine.ocr(img, img_name=filename)
         
         page = _engine_result_to_ocr_page(result)
         
-        jobs[job_id].result = OCRResponse(
+        job.result = OCRResponse(
             model="ndlocr-lite",
             pages=[page],
             usage={"pages": 1}
         )
-        jobs[job_id].status = "completed"
+        job.status = "completed"
     except Exception:
         logger.exception("An error occurred during background OCR processing")
-        jobs[job_id].status = "failed"
-        jobs[job_id].error = "An internal error occurred during OCR processing"
+        job.status = "failed"
+        job.error = "An internal error occurred during OCR processing"
 
 @app.post("/v1/ocr", response_model=OCRResponse)
 async def ocr_endpoint(
     request: Request,
     file: Optional[UploadFile] = File(None),
-    engine: NDLOCREngine = Depends(get_engine),
 ):
     # Same as before... but uses existing implementation
     img, filename = await _get_image_from_request(request, file)
     
+    engine: NDLOCREngine = request.app.state.engine
     if engine is None:
         raise HTTPException(status_code=503, detail="Engine not initialized")
 
@@ -111,27 +121,26 @@ async def create_ocr_job(
     background_tasks: BackgroundTasks,
     request: Request,
     file: Optional[UploadFile] = File(None),
-    engine: NDLOCREngine = Depends(get_engine),
-    jobs: Dict[str, OCRJobResult] = Depends(get_jobs),
 ):
     img, filename = await _get_image_from_request(request, file)
     
     job_id = str(uuid.uuid4())
-    jobs[job_id] = OCRJobResult(job_id=job_id, status="pending")
+    job_store: InMemoryJobStore = request.app.state.job_store
+    engine: NDLOCREngine = request.app.state.engine
+
+    job_store.set(job_id, OCRJobResult(job_id=job_id, status="pending"))
     
-    background_tasks.add_task(process_ocr_job, job_id, img, filename, engine, jobs)
+    background_tasks.add_task(process_ocr_job, job_id, img, filename, engine, job_store)
     
     return OCRJobResponse(job_id=job_id, status="pending")
 
 @app.get("/v1/ocr/jobs/{job_id}", response_model=OCRJobResult)
-async def get_ocr_job(
-    request: Request,
-    job_id: str,
-    jobs: Dict[str, OCRJobResult] = Depends(get_jobs),
-):
-    if job_id not in jobs:
+async def get_ocr_job(request: Request, job_id: str):
+    job_store: InMemoryJobStore = request.app.state.job_store
+    job = job_store.get(job_id)
+    if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
-    return jobs[job_id]
+    return job
 
 async def _get_image_from_request(request: Request, file: Optional[UploadFile]):
     img = None
@@ -183,3 +192,4 @@ async def _get_image_from_request(request: Request, file: Optional[UploadFile]):
 async def health(request: Request):
     engine_ready = hasattr(request.app.state, "engine") and request.app.state.engine is not None
     return {"status": "ok", "engine_ready": engine_ready}
+```
