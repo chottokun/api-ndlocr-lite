@@ -192,4 +192,3 @@ async def _get_image_from_request(request: Request, file: Optional[UploadFile]):
 async def health(request: Request):
     engine_ready = hasattr(request.app.state, "engine") and request.app.state.engine is not None
     return {"status": "ok", "engine_ready": engine_ready}
-```
