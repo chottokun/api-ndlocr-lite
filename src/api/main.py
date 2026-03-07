@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Body, BackgroundTasks, Depends
+from fastapi import FastAPI, UploadFile, File, HTTPException, Request, BackgroundTasks
 from contextlib import asynccontextmanager
 import asyncio
 import io
@@ -8,7 +8,7 @@ import binascii
 import PIL
 from PIL import Image
 import base64
-from typing import List, Optional, Dict, Any
+from typing import Optional, Dict, Any
 import os
 import logging
 
@@ -42,11 +42,11 @@ def _engine_result_to_ocr_page(result: Dict[str, Any], index: int = 0) -> OCRPag
         height=result["img_info"]["height"],
         lines=[
             OCRLine(
-                id=l["id"],
-                text=l["text"],
-                confidence=l["confidence"],
-                boundingBox=l["boundingBox"]
-            ) for l in result["lines"]
+                id=line["id"],
+                text=line["text"],
+                confidence=line["confidence"],
+                boundingBox=line["boundingBox"]
+            ) for line in result["lines"]
         ]
     )
 
@@ -145,14 +145,14 @@ async def get_ocr_job(request: Request, job_id: str):
 async def _get_image_from_request(request: Request, file: Optional[UploadFile]):
     img = None
     filename = "image.jpg"
-    if file:
-        contents = await file.read(MAX_IMAGE_SIZE + 1)
-        if len(contents) > MAX_IMAGE_SIZE:
-            raise HTTPException(status_code=413, detail="File too large")
-        img = Image.open(io.BytesIO(contents))
-        filename = file.filename or "uploaded_image.jpg"
-    else:
-        try:
+    try:
+        if file:
+            contents = await file.read(MAX_IMAGE_SIZE + 1)
+            if len(contents) > MAX_IMAGE_SIZE:
+                raise HTTPException(status_code=413, detail="File too large")
+            img = Image.open(io.BytesIO(contents))
+            filename = file.filename or "uploaded_image.jpg"
+        else:
             cl = request.headers.get("Content-Length")
             if cl and int(cl) > MAX_BODY_SIZE:
                 raise HTTPException(status_code=413, detail="Request body too large")
@@ -172,13 +172,14 @@ async def _get_image_from_request(request: Request, file: Optional[UploadFile]):
             contents = base64.b64decode(encoded)
             img = Image.open(io.BytesIO(contents))
             filename = "base64_image.jpg"
-        except HTTPException:
-            raise
-        except (binascii.Error, PIL.UnidentifiedImageError, ValueError) as e:
-            raise HTTPException(status_code=400, detail=f"Invalid request: {str(e)}")
-        except Exception:
-            logger.exception("Unexpected error while parsing image from request")
-            raise HTTPException(status_code=500, detail="An internal error occurred while processing the request")
+    except HTTPException:
+        raise
+    except (binascii.Error, PIL.UnidentifiedImageError, ValueError) as e:
+        logger.warning(f"Invalid image request: {str(e)}")
+        raise HTTPException(status_code=400, detail="Invalid request: Invalid image data or format")
+    except Exception:
+        logger.exception("Unexpected error while parsing image from request")
+        raise HTTPException(status_code=500, detail="An internal error occurred while processing the request")
     
     if img is None:
         raise HTTPException(status_code=400, detail="No image provided")
