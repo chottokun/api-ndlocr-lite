@@ -78,10 +78,10 @@ test_ocr_quick() {
 case "$TARGET" in
     cpu)
         echo "[INFO] === CPU Container Test ==="
-        docker compose up -d api-cpu
-        wait_for_health "$CPU_PORT" "CPU"
-        test_ocr_quick "$CPU_PORT" "CPU"
-        run_load_test "$CPU_PORT" "CPU"
+        docker compose up -d api
+        wait_for_health "8001" "CPU"
+        test_ocr_quick "8001" "CPU"
+        run_load_test "8001" "CPU"
         docker compose down
         ;;
     gpu)
@@ -98,10 +98,10 @@ case "$TARGET" in
 
         # CPU Test
         echo "[INFO] --- Phase 1: CPU Container ---"
-        docker compose up -d api-cpu
-        wait_for_health "$CPU_PORT" "CPU"
-        test_ocr_quick "$CPU_PORT" "CPU"
-        run_load_test "$CPU_PORT" "CPU"
+        docker compose up -d api
+        wait_for_health "8001" "CPU"
+        test_ocr_quick "8001" "CPU"
+        run_load_test "8001" "CPU"
         docker compose down
         echo ""
 

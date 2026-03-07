@@ -22,6 +22,7 @@ dependencies = [
     "reportlab==4.2.5",
     "tqdm==4.66.4",
     "uvicorn>=0.41.0",
+    "opencv-python-headless",
 ]
 
 [dependency-groups]
