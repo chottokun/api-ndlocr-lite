@@ -151,10 +151,7 @@ class NDLOCREngine:
         detections = self.detector.detect(img)
         classeslist = list(self.detector.classes.values())
         
-        resultobj = [dict(), dict()]
-        resultobj[0][0] = list()
-        for i in range(17):
-            resultobj[1][i] = []
+        resultobj = [{0: []}, {i: [] for i in range(17)}]
         for det in detections:
             xmin, ymin, xmax, ymax = det["box"]
             conf = det["confidence"]
