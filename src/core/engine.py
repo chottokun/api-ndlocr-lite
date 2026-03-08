@@ -29,6 +29,12 @@ class RecogLine:
         return self.idx < other.idx
 
 class NDLOCREngine:
+    # Constants for cascade logic
+    CASCADE_PRED_CHAR_SMALL = 3.0
+    CASCADE_PRED_CHAR_MEDIUM = 2.0
+    CASCADE_RECOG30_MAX_LEN = 25
+    CASCADE_RECOG50_MAX_LEN = 45
+
     def __init__(
         self,
         device: str = "cpu",
@@ -99,9 +105,9 @@ class NDLOCREngine:
         targetdflist50 = []
         targetdflist100 = []
         for lineobj in alllineobj:
-            if lineobj.pred_char_cnt == 3 and is_cascade:
+            if lineobj.pred_char_cnt == self.CASCADE_PRED_CHAR_SMALL and is_cascade:
                 targetdflist30.append(lineobj)
-            elif lineobj.pred_char_cnt == 2 and is_cascade:
+            elif lineobj.pred_char_cnt == self.CASCADE_PRED_CHAR_MEDIUM and is_cascade:
                 targetdflist50.append(lineobj)
             else:
                 targetdflist100.append(lineobj)
@@ -111,7 +117,7 @@ class NDLOCREngine:
             resultlines30 = list(self.executor.map(self.recognizer30.read, [t.npimg for t in targetdflist30]))
             for i, pred_str in enumerate(resultlines30):
                 lineobj = targetdflist30[i]
-                if len(pred_str) >= 25:
+                if len(pred_str) >= self.CASCADE_RECOG30_MAX_LEN:
                     targetdflist50.append(lineobj)
                 else:
                     lineobj.pred_str = pred_str
@@ -121,7 +127,7 @@ class NDLOCREngine:
             resultlines50 = list(self.executor.map(self.recognizer50.read, [t.npimg for t in targetdflist50]))
             for i, pred_str in enumerate(resultlines50):
                 lineobj = targetdflist50[i]
-                if len(pred_str) >= 45:
+                if len(pred_str) >= self.CASCADE_RECOG50_MAX_LEN:
                     targetdflist100.append(lineobj)
                 else:
                     lineobj.pred_str = pred_str
@@ -164,8 +170,6 @@ class NDLOCREngine:
         eval_xml(root, logger=None)
         
         alllineobj = []
-        tatelinecnt = 0
-        alllinecnt = 0
         
         for idx, lineobj in enumerate(root.findall(".//LINE")):
             xmin = int(lineobj.get("X"))
@@ -177,9 +181,6 @@ class NDLOCREngine:
             except (ValueError, TypeError):
                 pred_char_cnt = 100.0
             
-            if line_h > line_w:
-                tatelinecnt += 1
-            alllinecnt += 1
             lineimg = img[ymin:ymin+line_h, xmin:xmin+line_w, :]
             alllineobj.append(RecogLine(lineimg, idx, pred_char_cnt))
 
@@ -200,9 +201,6 @@ class NDLOCREngine:
                     line_elem.set("CONF", f"{det['confidence']:0.3f}")
                     pred_char_cnt = det.get("pred_char_count", 100.0)
                     line_elem.set("PRED_CHAR_CNT", f"{pred_char_cnt:0.3f}")
-                    if line_h > line_w:
-                        tatelinecnt += 1
-                    alllinecnt += 1
                     lineimg = img[int(ymin):int(ymax), int(xmin):int(xmax), :]
                     alllineobj.append(RecogLine(lineimg, idx, pred_char_cnt))
 
@@ -229,11 +227,6 @@ class NDLOCREngine:
             resjsonarray.append(jsonobj)
             
         full_text = "\n".join(resultlinesall)
-        if alllinecnt > 0 and tatelinecnt / alllinecnt > 0.5:
-            # Reverse order for vertical text if needed? Original code does this:
-            # alltextlist=alltextlist[::-1]
-            # But here we only have one "page" at a time in this method
-            pass
 
         return {
             "text": full_text,
