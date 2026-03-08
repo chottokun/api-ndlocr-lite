@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Body, BackgroundTasks, Depends
+from fastapi import FastAPI, UploadFile, File, HTTPException, Request, BackgroundTasks
 from contextlib import asynccontextmanager
 import asyncio
 import io
@@ -8,7 +8,7 @@ import binascii
 import PIL
 from PIL import Image
 import base64
-from typing import List, Optional, Dict, Any
+from typing import Optional, Dict, Any
 import os
 import logging
 
@@ -42,11 +42,11 @@ def _engine_result_to_ocr_page(result: Dict[str, Any], index: int = 0) -> OCRPag
         height=result["img_info"]["height"],
         lines=[
             OCRLine(
-                id=l["id"],
-                text=l["text"],
-                confidence=l["confidence"],
-                boundingBox=l["boundingBox"]
-            ) for l in result["lines"]
+                id=line["id"],
+                text=line["text"],
+                confidence=line["confidence"],
+                boundingBox=line["boundingBox"]
+            ) for line in result["lines"]
         ]
     )
 
