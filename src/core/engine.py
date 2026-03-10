@@ -2,7 +2,7 @@ import sys
 import os
 import numpy as np
 from PIL import Image
-import xml.etree.ElementTree as ET
+from defusedxml import ElementTree as ET
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from concurrent.futures import ThreadPoolExecutor
@@ -170,8 +170,9 @@ class NDLOCREngine:
         eval_xml(root, logger=None)
         
         alllineobj = []
+        lines = root.findall(".//LINE")
         
-        for idx, lineobj in enumerate(root.findall(".//LINE")):
+        for idx, lineobj in enumerate(lines):
             xmin = int(lineobj.get("X"))
             ymin = int(lineobj.get("Y"))
             line_w = int(lineobj.get("WIDTH"))
@@ -203,12 +204,13 @@ class NDLOCREngine:
                     line_elem.set("PRED_CHAR_CNT", f"{pred_char_cnt:0.3f}")
                     lineimg = img[int(ymin):int(ymax), int(xmin):int(xmax), :]
                     alllineobj.append(RecogLine(lineimg, idx, pred_char_cnt))
+            lines = root.findall(".//LINE")
 
         # Recognition
         resultlinesall = self._process_cascade(alllineobj, is_cascade=True)
         
         resjsonarray = []
-        for idx, lineobj in enumerate(root.findall(".//LINE")):
+        for idx, lineobj in enumerate(lines):
             lineobj.set("STRING", resultlinesall[idx])
             xmin = int(lineobj.get("X"))
             ymin = int(lineobj.get("Y"))

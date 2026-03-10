@@ -1,8 +1,9 @@
 import pytest
+import base64
+import time
 from fastapi.testclient import TestClient
 from pathlib import Path
 from src.api.main import app
-import time
 
 @pytest.fixture(scope="module")
 def client():
@@ -35,7 +36,6 @@ def test_ocr_upload(client, sample_image_path):
     assert "第8章" in data["pages"][0]["markdown"]
 
 def test_ocr_base64(client, sample_image_path):
-    import base64
     with open(sample_image_path, "rb") as f:
         encoded = base64.b64encode(f.read()).decode()
 
