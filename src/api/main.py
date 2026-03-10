@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, Request, BackgroundTasks
+from fastapi import FastAPI, UploadFile, File, HTTPException, Request, BackgroundTasks, Depends
 from contextlib import asynccontextmanager
 import asyncio
 import io
