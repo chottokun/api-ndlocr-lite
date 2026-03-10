@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, Request, BackgroundTasks
+from fastapi import FastAPI, UploadFile, File, HTTPException, Request, BackgroundTasks, Depends
 from contextlib import asynccontextmanager
 import asyncio
 import io
@@ -67,6 +67,12 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="NDLOCR-Lite API", lifespan=lifespan)
 
+def get_engine(request: Request) -> NDLOCREngine:
+    return request.app.state.engine
+
+def get_job_store(request: Request) -> InMemoryJobStore:
+    return request.app.state.job_store
+
 def process_ocr_job(job_id: str, img: Image.Image, filename: str, engine: NDLOCREngine, job_store: InMemoryJobStore):
     job = job_store.get(job_id)
     if job is None:
@@ -98,11 +104,10 @@ def process_ocr_job(job_id: str, img: Image.Image, filename: str, engine: NDLOCR
 async def ocr_endpoint(
     request: Request,
     file: Optional[UploadFile] = File(None),
+    engine: NDLOCREngine = Depends(get_engine),
 ):
-    # Same as before... but uses existing implementation
     img, filename = await _get_image_from_request(request, file)
     
-    engine: NDLOCREngine = request.app.state.engine
     if engine is None:
         raise HTTPException(status_code=503, detail="Engine not initialized")
 
@@ -121,13 +126,12 @@ async def create_ocr_job(
     background_tasks: BackgroundTasks,
     request: Request,
     file: Optional[UploadFile] = File(None),
+    engine: NDLOCREngine = Depends(get_engine),
+    job_store: InMemoryJobStore = Depends(get_job_store),
 ):
     img, filename = await _get_image_from_request(request, file)
     
     job_id = str(uuid.uuid4())
-    job_store: InMemoryJobStore = request.app.state.job_store
-    engine: NDLOCREngine = request.app.state.engine
-
     job_store.set(job_id, OCRJobResult(job_id=job_id, status="pending"))
     
     background_tasks.add_task(process_ocr_job, job_id, img, filename, engine, job_store)
@@ -135,8 +139,7 @@ async def create_ocr_job(
     return OCRJobResponse(job_id=job_id, status="pending")
 
 @app.get("/v1/ocr/jobs/{job_id}", response_model=OCRJobResult)
-async def get_ocr_job(request: Request, job_id: str):
-    job_store: InMemoryJobStore = request.app.state.job_store
+async def get_ocr_job(job_id: str, job_store: InMemoryJobStore = Depends(get_job_store)):
     job = job_store.get(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
