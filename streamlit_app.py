@@ -145,7 +145,6 @@ def check_health(api_url: str) -> Dict[str, Any]:
 
 # --- Sidebar UI ---
 with st.sidebar:
-    st.image("https://raw.githubusercontent.com/ndl-lab/ndlocr-lite/main/ndlocr-lite-gui/ndl-lab-logo.png", width=150)
     st.header("NDLOCR-Lite API")
     
     api_base_url = st.text_input("API Base URL", value=DEFAULT_API_URL)
