@@ -27,7 +27,7 @@ graph TD
 
     Client -->|POST /v1/ocr| API
     Client -->|POST /v1/ocr/jobs| API
-    Client -->|GET /v1/ocr/jobs/{id}| API
+    Client -->|"GET /v1/ocr/jobs/{id}"| API
 
     API -->|sync/async call| Engine
     API <-->|read/write| JS
