@@ -4,9 +4,11 @@ services:
     ports:
       - "8001:8000"
     environment:
-      - PYTHONPATH=/app:/app/extern/ndlocr-lite/src
+      - PYTHONPATH=/home/appuser/app:/home/appuser/app/extern/ndlocr-lite/src
     volumes:
-      - .:/app
+      - .:/home/appuser/app
+      - /home/appuser/app/.venv  # Anonymous volume to isolate .venv
+    working_dir: /home/appuser/app
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
       interval: 30s
