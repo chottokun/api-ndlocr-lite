@@ -58,7 +58,8 @@ def _engine_result_to_ocr_page(result: Dict[str, Any], index: int = 0) -> OCRPag
                 id=line["id"],
                 text=line["text"],
                 confidence=line["confidence"],
-                boundingBox=line["boundingBox"]
+                boundingBox=line["boundingBox"],
+                class_index=line.get("class_index")
             ) for line in result["lines"]
         ]
     )
@@ -79,7 +80,8 @@ async def lifespan(app: FastAPI):
     logger.info("Initializing NDLOCR Engine and Job Store...")
     # Initialize engine on CPU by default.
     # Models are loaded once and stored in app.state for sharing across requests.
-    app.state.engine = NDLOCREngine(device="cpu")
+    enable_tcy = os.getenv("ENABLE_TCY", "false").lower() == "true"
+    app.state.engine = NDLOCREngine(device="cpu", enable_tcy=enable_tcy)
     app.state.job_store = InMemoryJobStore()
     yield
     logger.info("Shutting down...")

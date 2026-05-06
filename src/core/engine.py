@@ -58,20 +58,22 @@ class NDLOCREngine:
         det_score_threshold: float = 0.2,
         det_conf_threshold: float = 0.25,
         det_iou_threshold: float = 0.2,
+        enable_tcy: bool = False,
     ):
         """
         Initializes the engine with model paths and detection thresholds.
         Loads ONNX models into memory.
         """
         self.device = device
+        self.enable_tcy = enable_tcy
         
-        # Default paths pointing into the ndlocr-lite submodule
+        # Default paths pointing into the ndlocr-lite submodule (updated to 24px models)
         base_dir = SUBMODULE_SRC
         self.det_weights = det_weights or str(base_dir / "model" / "deim-s-1024x1024.onnx")
         self.det_classes = det_classes or str(base_dir / "config" / "ndl.yaml")
-        self.rec_weights = rec_weights or str(base_dir / "model" / "parseq-ndl-16x768-100-tiny-165epoch-tegaki2.onnx")
-        self.rec_weights30 = rec_weights30 or str(base_dir / "model" / "parseq-ndl-16x256-30-tiny-192epoch-tegaki3.onnx")
-        self.rec_weights50 = rec_weights50 or str(base_dir / "model" / "parseq-ndl-16x384-50-tiny-146epoch-tegaki2.onnx")
+        self.rec_weights = rec_weights or str(base_dir / "model" / "parseq-ndl-24x768-100-tiny-153epoch-tegaki3-r8data-202604.onnx")
+        self.rec_weights30 = rec_weights30 or str(base_dir / "model" / "parseq-ndl-24x256-30-tiny-189epoch-tegaki3-r8data-202604.onnx")
+        self.rec_weights50 = rec_weights50 or str(base_dir / "model" / "parseq-ndl-24x384-50-tiny-300epoch-tegaki3-r8data-202604.onnx")
         self.rec_classes = rec_classes or str(base_dir / "config" / "NDLmoji.yaml")
         
         self.det_score_threshold = det_score_threshold
@@ -113,7 +115,17 @@ class NDLOCREngine:
         with open(self.rec_classes, encoding="utf-8") as f:
             charobj = safe_load(f)
         charlist = list(charobj["model"]["charset_train"])
-        return PARSEQ(model_path=weights_path, charlist=charlist, device=self.device)
+        recognizer = PARSEQ(model_path=weights_path, charlist=charlist, device=self.device)
+        
+        if self.enable_tcy:
+            try:
+                from tcy_wrapper import TateChuYokoWrapper
+                recognizer = TateChuYokoWrapper(recognizer)
+                print(f"[INFO] TCY enabled for recognizer: {weights_path}")
+            except ImportError:
+                print("[WARNING] Could not import TateChuYokoWrapper. TCY will be disabled.")
+        
+        return recognizer
 
     def shutdown(self):
         """Shuts down the internal thread pool."""
@@ -124,11 +136,13 @@ class NDLOCREngine:
         Recognition cascading strategy.
         1. Routes lines to PARSEQ-30, 50, or 100 based on 'pred_char_cnt' from the detector.
         2. If a smaller model yields a result longer than its training length, it cascades to the next larger model.
-        This optimizes for speed without sacrificing accuracy on long lines.
+        3. For extremely long lines (>=98 chars), splits the line and re-recognizes (v1.2.1 improvement).
         """
         targetdflist30 = []
         targetdflist50 = []
         targetdflist100 = []
+        targetdflist200 = [] # For split lines
+        
         for lineobj in alllineobj:
             if lineobj.pred_char_cnt == self.CASCADE_PRED_CHAR_SMALL and is_cascade:
                 targetdflist30.append(lineobj)
@@ -161,12 +175,30 @@ class NDLOCREngine:
                     lineobj.pred_str = pred_str
                     targetdflistall.append(lineobj)
 
-        # Level 3: PARSEQ-100 (Highest capacity, longest lines)
+        # Level 3: PARSEQ-100 (Highest capacity, long lines)
         if len(targetdflist100) > 0:
             resultlines100 = list(self.executor.map(self.recognizer100.read, [t.npimg for t in targetdflist100]))
             for i, pred_str in enumerate(resultlines100):
                 lineobj = targetdflist100[i]
                 lineobj.pred_str = pred_str
+                # Long line splitting logic (v1.2.1)
+                if len(pred_str) >= 98 and lineobj.npimg.shape[0] < lineobj.npimg.shape[1]:
+                    baseimg = lineobj.npimg
+                    # Split into two halves
+                    tmplineobj_1 = RecogLine(npimg=baseimg[:, :baseimg.shape[1]//2, :], idx=lineobj.idx, pred_char_cnt=100)
+                    tmplineobj_2 = RecogLine(npimg=baseimg[:, baseimg.shape[1]//2:, :], idx=lineobj.idx, pred_char_cnt=100)
+                    targetdflist200.append(tmplineobj_1)
+                    targetdflist200.append(tmplineobj_2)
+                else:
+                    targetdflistall.append(lineobj)
+
+        # Level 4: Extremely long lines (Split and recognized by PARSEQ-100)
+        if len(targetdflist200) > 0:
+            resultlines200 = list(self.executor.map(self.recognizer100.read, [t.npimg for t in targetdflist200]))
+            for i in range(0, len(targetdflist200) - 1, 2):
+                idx_orig = targetdflist200[i].idx
+                combined_str = resultlines200[i] + resultlines200[i+1]
+                lineobj = RecogLine(npimg=None, idx=idx_orig, pred_char_cnt=100, pred_str=combined_str)
                 targetdflistall.append(lineobj)
                     
         # Re-sort results to original order
@@ -176,10 +208,10 @@ class NDLOCREngine:
     def ocr(self, pil_image: Image.Image, img_name: str = "image.jpg") -> Dict[str, Any]:
         """
         Main OCR pipeline.
-        1. Layout Detection: Locates lines, blocks, etc.
-        2. XML Representation: Converts detections to NDL-style XML.
-        3. Reading Order: Uses XY-Cut algorithm to determine logical reading sequence.
-        4. Recognition: Runs character recognition on extracted line images.
+        1. Layout Detection
+        2. XML Representation
+        3. Reading Order
+        4. Recognition
         """
         img = np.array(pil_image.convert('RGB'))
         img_h, img_w = img.shape[:2]
@@ -196,9 +228,11 @@ class NDLOCREngine:
         for det in detections:
             xmin, ymin, xmax, ymax = det["box"]
             conf = det["confidence"]
+            char_count = det.get("pred_char_count", 100.0) # v1.2.1 uses char_count in resultobj
             if det["class_index"] == 0:
                 resultobj[0][0].append([xmin, ymin, xmax, ymax])
-            resultobj[1][det["class_index"]].append([xmin, ymin, xmax, ymax, conf])
+            # v1.2.1 adds char_count here
+            resultobj[1][det["class_index"]].append([xmin, ymin, xmax, ymax, conf, char_count])
             
         # Security: Sanitize img_name to prevent XML injection
         safe_img_name = "".join(c for c in img_name if c.isalnum() or c in "._- ")
@@ -215,6 +249,9 @@ class NDLOCREngine:
         alllineobj = []
         lines = root.findall(".//LINE")
         
+        tatelinecnt = 0
+        alllinecnt = 0
+        
         for idx, lineobj in enumerate(lines):
             xmin = int(lineobj.get("X"))
             ymin = int(lineobj.get("Y"))
@@ -225,10 +262,14 @@ class NDLOCREngine:
             except (ValueError, TypeError):
                 pred_char_cnt = 100.0
             
+            if line_h > line_w:
+                tatelinecnt += 1
+            alllinecnt += 1
+            
             lineimg = img[ymin:ymin+line_h, xmin:xmin+line_w, :]
             alllineobj.append(RecogLine(lineimg, idx, pred_char_cnt))
 
-        # Fallback: if XY-Cut fails to find lines but we have detections, use raw detections
+        # Fallback: if XY-Cut fails to find lines but we have detections
         if len(alllineobj) == 0 and len(detections) > 0:
             page = root.find("PAGE")
             for idx, det in enumerate(detections):
@@ -237,7 +278,9 @@ class NDLOCREngine:
                 line_h = int(ymax - ymin)
                 if line_w > 0 and line_h > 0:
                     line_elem = ET.SubElement(page, "LINE")
-                    line_elem.set("TYPE", "本文")
+                    c_idx = int(det["class_index"])
+                    type_name = classeslist[c_idx] if c_idx < len(classeslist) else "本文"
+                    line_elem.set("TYPE", type_name)
                     line_elem.set("X", str(int(xmin)))
                     line_elem.set("Y", str(int(ymin)))
                     line_elem.set("WIDTH", str(line_w))
@@ -245,12 +288,21 @@ class NDLOCREngine:
                     line_elem.set("CONF", f"{det['confidence']:0.3f}")
                     pred_char_cnt = det.get("pred_char_count", 100.0)
                     line_elem.set("PRED_CHAR_CNT", f"{pred_char_cnt:0.3f}")
+                    if line_h > line_w:
+                        tatelinecnt += 1
+                    alllinecnt += 1
                     lineimg = img[int(ymin):int(ymax), int(xmin):int(xmax), :]
                     alllineobj.append(RecogLine(lineimg, idx, pred_char_cnt))
             lines = root.findall(".//LINE")
 
         # 4. Recognition (using cascade and thread pool)
         resultlinesall = self._process_cascade(alllineobj, is_cascade=True)
+        
+        # v1.2.1 Verticality check (Reverse text order if majority vertical)
+        if alllinecnt > 0 and tatelinecnt / alllinecnt > 0.5:
+            full_text = "\n".join(resultlinesall[::-1])
+        else:
+            full_text = "\n".join(resultlinesall)
         
         # Format results into final JSON structure
         resjsonarray = []
@@ -264,16 +316,20 @@ class NDLOCREngine:
                 conf = float(lineobj.get("CONF"))
             except (ValueError, TypeError):
                 conf = 0.0
+                
+            # XML TYPE -> c_idx (v1.2.1 improvement)
+            type_str = lineobj.get("TYPE", "")
+            c_idx = classeslist.index(type_str) if type_str in classeslist else 1
+            
             jsonobj = {
                 "boundingBox": [[xmin, ymin], [xmin, ymin+line_h], [xmin+line_w, ymin+line_h], [xmin+line_w, ymin]],
                 "id": idx,
                 "text": resultlinesall[idx],
-                "confidence": conf
+                "confidence": conf,
+                "class_index": c_idx
             }
             resjsonarray.append(jsonobj)
             
-        full_text = "\n".join(resultlinesall)
-
         return {
             "text": full_text,
             "lines": resjsonarray,

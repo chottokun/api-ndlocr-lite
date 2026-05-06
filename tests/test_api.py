@@ -34,6 +34,11 @@ def test_ocr_upload(client, sample_image_path):
     assert "pages" in data
     assert len(data["pages"]) > 0
     assert "第8章" in data["pages"][0]["markdown"]
+    
+    # Check for class_index in lines
+    for line in data["pages"][0]["lines"]:
+        assert "class_index" in line
+        assert line["class_index"] is not None
 
 def test_ocr_base64(client, sample_image_path):
     with open(sample_image_path, "rb") as f:
