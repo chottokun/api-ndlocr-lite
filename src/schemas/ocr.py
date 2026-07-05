@@ -6,6 +6,8 @@ class OCRLine(BaseModel):
     text: str
     confidence: float
     boundingBox: List[List[int]]
+    isVertical: Optional[str] = None
+    isTextline: Optional[str] = None
     class_index: Optional[int] = None
 
 class OCRPage(BaseModel):
