@@ -21,6 +21,7 @@ The system is a FastAPI-based wrapper around the [NDLOCR-Lite](https://github.co
 graph TD
     Client[Client]
     API[FastAPI /v1/ocr]
+    API_OAI[FastAPI /v1/chat/completions]
     Engine[NDLOCR Engine]
     Sub[NDLOCR-Lite Submodule]
     JS[InMemoryJobStore]
@@ -28,8 +29,10 @@ graph TD
     Client -->|POST /v1/ocr| API
     Client -->|POST /v1/ocr/jobs| API
     Client -->|"GET /v1/ocr/jobs/{id}"| API
+    Client -->|POST /v1/chat/completions| API_OAI
 
     API -->|sync/async call| Engine
+    API_OAI -->|sync call| Engine
     API <-->|read/write| JS
 
     Engine -->|uses| Sub
@@ -85,7 +88,25 @@ sequenceDiagram
     API-->>Client: 200 OK (OCRJobResult)
 ```
 
-### 3. Engine OCR Pipeline (`NDLOCREngine.ocr`)
+### 3. OpenAI互換 Vision API フロー (`POST /v1/chat/completions`)
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant API
+    participant Engine
+
+    Client->>API: POST /v1/chat/completions (JSON with image_url)
+    API->>API: Base64画像の抽出・デコードおよび検証
+    API->>Engine: engine.ocr(image)
+    Note over Engine: Layout Detection -> XML -> Reading Order -> Recognition
+    Engine-->>API: 認識結果 (Dict)
+    API->>API: ChatCompletionResponse スキーマへマッピング
+    Note over API: get_ocr_details ツールコールの引数に詳細座標を含める
+    API-->>Client: 200 OK (ChatCompletionResponse)
+```
+
+### 4. Engine OCR Pipeline (`NDLOCREngine.ocr`)
 
 The engine processes images in the following stages:
 

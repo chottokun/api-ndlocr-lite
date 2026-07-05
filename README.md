@@ -6,6 +6,7 @@
 NDLOCR-Liteは、GPUを必要とせず、一般的なPC環境で高速に動作するOCRエンジンです。本プロジェクトは、この強力なエンジンを現代的なAIワークフローやエージェントから容易に利用できるよう、FastAPIを用いてAPI化したものです。
 
 ### 主な機能
+- **OpenAI互換の Vision API サポート**: `/v1/chat/completions` に画像を送信することで、OpenAI互換のレスポンスでOCR結果を取得可能。
 - **OpenAI互換のスキーマ**: OpenAIやMistral AIのOCR APIに近いレスポンス形式を採用。
 - **マルチモード対応**: 
   - `multipart/form-data` による画像ファイルの直接アップロード。
@@ -73,6 +74,36 @@ curl -X POST http://localhost:8000/v1/ocr \
    ```bash
    curl http://localhost:8000/v1/ocr/jobs/{job_id}
    ```
+
+### OpenAI互換 Vision API (Chat Completions)
+OpenAI の Chat Completions API スキーマと互換性のあるエンドポイントです。LLMエージェントや外部ワークフローから容易に呼び出すことができます。
+
+```bash
+curl -X POST http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "ndlocr-lite",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {"type": "text", "text": "OCR this image"},
+          {
+            "type": "image_url",
+            "image_url": {"url": "data:image/jpeg;base64,...(画像Base64データ)..."}
+          }
+        ]
+      }
+    ]
+  }'
+```
+
+レスポンスの `message.content` には抽出されたプレーンテキスト（マークダウン形式）が含まれ、さらに `tool_calls` 内の `get_ocr_details` 関数の引数として、座標情報や信頼度などの詳細なメタデータが含まれます。
+
+### OCR結果の拡張フィールド
+認識結果の各テキスト行（`lines`）オブジェクトには、以下の拡張フィールドが含まれます：
+- `isVertical`: `true`/`false` 形式の文字列。行のテキストが縦書きかどうかを判定します。
+- `isTextline`: 常に `"true"`。テキスト行であることを示します。
 
 ---
 

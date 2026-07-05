@@ -6,12 +6,14 @@
 国立国会図書館 (NDL) の `ndlocr-lite` をベースにした、OpenAI/Mistral OCR互換スキーマを持つOCR APIサーバー。
 - **目的**: 軽量・高速なOCRエンジンを現代的なAIワークフロー（エージェント、LLM統合等）から容易に利用可能にする。
 - **特徴**: GPU不要（ONNXRuntime CPU）、非同期ジョブ管理、OpenAI互換レスポンス。
-- **最新機能 (v1.2.1準拠)**:
+- **最新機能 (v1.2.3準拠)**:
   - 24px 高解像度認識モデルの採用。
   - 縦中横 (TCY) サポートによる新聞・雑誌資料の認識精度向上。
   - 長文（98文字以上）の自動分割認識ロジック。
   - ページ内の縦書き/横書き判定に基づくテキスト順序の自動調整。
   - `class_index` によるレイアウト情報の提供。
+  - **OpenAI互換 Vision API (`/v1/chat/completions`) のサポート**。
+  - OCR結果に `isVertical` (縦書き判定) および `isTextline` (テキスト行フラグ) フィールドを追加。
 
 ## 2. 技術スタック & 環境要件
 - **言語**: Python 3.13+
@@ -26,9 +28,9 @@
 ## 3. ディレクトリ構成
 - `src/api/`: APIエンドポイント定義 (`main.py`)、ジョブ管理、依存関係。
 - `src/core/`: OCRエンジンラッパー (`engine.py`)。サブモジュールとの橋渡し。
-- `src/schemas/`: Pydanticモデル (`ocr.py`)。OpenAI互換スキーマ。
+- `src/schemas/`: Pydanticモデル。通常のOCRレスポンス (`ocr.py`) と OpenAI互換用のモデル (`openai.py`)。
 - `extern/ndlocr-lite/`: NDL OCR本体 (Git Submodule)。
-- `tests/`: ユニットテスト、統合テスト、負荷テスト (`locustfile.py`)。
+- `tests/`: ユニットテスト、自動テスト、統合テスト、負荷テスト (`locustfile.py`)。
 - `docs/`: アーキテクチャドキュメント、負荷テストレポート。
 
 ## 4. アーキテクチャ原則
