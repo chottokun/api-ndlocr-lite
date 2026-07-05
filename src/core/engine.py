@@ -324,7 +324,9 @@ class NDLOCREngine:
             jsonobj = {
                 "boundingBox": [[xmin, ymin], [xmin, ymin+line_h], [xmin+line_w, ymin+line_h], [xmin+line_w, ymin]],
                 "id": idx,
+                "isVertical": "true" if line_h > line_w else "false",
                 "text": resultlinesall[idx],
+                "isTextline": "true",
                 "confidence": conf,
                 "class_index": c_idx
             }

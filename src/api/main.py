@@ -8,12 +8,15 @@ import binascii
 import PIL
 from PIL import Image
 import base64
+import pydantic
 from typing import Optional, Dict, Any
 import os
 import logging
 
+import time
 from src.core.engine import NDLOCREngine
 from src.schemas.ocr import OCRResponse, OCRPage, OCRLine, OCRRequest, OCRJobResponse, OCRJobResult
+from src.schemas.openai import ChatCompletionRequest, ChatCompletionResponse, ChatCompletionChoice, ChatCompletionChoiceMessage
 
 # Configure logging to provide visibility into API operations and background tasks
 logging.basicConfig(level=logging.INFO)
@@ -59,6 +62,8 @@ def _engine_result_to_ocr_page(result: Dict[str, Any], index: int = 0) -> OCRPag
                 text=line["text"],
                 confidence=line["confidence"],
                 boundingBox=line["boundingBox"],
+                isVertical=line.get("isVertical"),
+                isTextline=line.get("isTextline"),
                 class_index=line.get("class_index")
             ) for line in result["lines"]
         ]
@@ -92,11 +97,11 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="NDLOCR-Lite API", lifespan=lifespan)
 
 # Dependency injection helpers to access shared state
-def get_engine(request: Request) -> NDLOCREngine:
-    return request.app.state.engine
+def get_engine(request: Request) -> Optional[NDLOCREngine]:
+    return getattr(request.app.state, "engine", None)
 
-def get_job_store(request: Request) -> InMemoryJobStore:
-    return request.app.state.job_store
+def get_job_store(request: Request) -> Optional[InMemoryJobStore]:
+    return getattr(request.app.state, "job_store", None)
 
 def process_ocr_job(job_id: str, img: Image.Image, filename: str, engine: NDLOCREngine, job_store: InMemoryJobStore):
     """
@@ -156,7 +161,9 @@ async def ocr_endpoint(
         # Convert and return response
         page = _engine_result_to_ocr_page(result)
         return OCRResponse(model="ndlocr-lite", pages=[page], usage={"pages": 1})
-    except Exception:
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise e
         logger.exception("An error occurred during synchronous OCR processing")
         raise HTTPException(status_code=500, detail="An internal error occurred during OCR processing")
 
@@ -192,6 +199,86 @@ async def get_ocr_job(job_id: str, job_store: InMemoryJobStore = Depends(get_job
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
     return job
+
+@app.post("/v1/chat/completions", response_model=ChatCompletionResponse)
+async def openai_vision_endpoint(
+    request: ChatCompletionRequest,
+    engine: Optional[NDLOCREngine] = Depends(get_engine),
+):
+    """
+    OpenAI-compatible Vision API endpoint.
+    Extracts image from the messages and returns OCR results as a chat completion.
+    """
+    if engine is None:
+        raise HTTPException(status_code=503, detail="Engine not initialized")
+
+    img_data = None
+    for message in request.messages:
+        if message.role == "user" and isinstance(message.content, list):
+            for part in message.content:
+                if hasattr(part, "type") and part.type == "image_url":
+                    img_data = part.image_url.url
+                    break
+        if img_data:
+            break
+
+    if not img_data:
+        raise HTTPException(status_code=400, detail="No image provided in messages")
+
+    try:
+        # Remove data URI prefix if present
+        header, encoded = img_data.split(",", 1) if "," in img_data else (None, img_data)
+        contents = base64.b64decode(encoded)
+        img = Image.open(io.BytesIO(contents))
+
+        # Dimension check
+        if img.width * img.height > MAX_PIXELS:
+            raise HTTPException(status_code=400, detail="Image dimensions too large")
+
+        # Run OCR
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(None, engine.ocr, img, "openai_image.jpg")
+
+        # Format response
+        return ChatCompletionResponse(
+            id=f"chatcmpl-{uuid.uuid4()}",
+            created=int(time.time()),
+            model=request.model,
+            choices=[
+                ChatCompletionChoice(
+                    index=0,
+                    message=ChatCompletionChoiceMessage(
+                        role="assistant",
+                        content=result["text"],
+                        tool_calls=[{
+                            "id": f"call_{uuid.uuid4()}",
+                            "type": "function",
+                            "function": {
+                                "name": "get_ocr_details",
+                                "arguments": json.dumps({"pages": [_engine_result_to_ocr_page(result).model_dump()]})
+                            }
+                        }]
+                    ),
+                    finish_reason="stop"
+                )
+            ],
+            usage={
+                "prompt_tokens": 0, # Tokens are not really applicable here but kept for compatibility
+                "completion_tokens": len(result["text"]),
+                "total_tokens": len(result["text"])
+            }
+        )
+    except HTTPException:
+        raise
+    except pydantic.ValidationError:
+        logger.exception("ValidationError occurred during OpenAI-compatible OCR processing")
+        raise HTTPException(status_code=500, detail="An internal error occurred during OCR processing")
+    except (binascii.Error, PIL.UnidentifiedImageError, ValueError) as e:
+        logger.warning(f"Invalid image in OpenAI request: {str(e)}")
+        raise HTTPException(status_code=400, detail="Invalid request: Invalid image data or format")
+    except Exception:
+        logger.exception("An error occurred during OpenAI-compatible OCR processing")
+        raise HTTPException(status_code=500, detail="An internal error occurred during OCR processing")
 
 async def _get_image_from_request(request: Request, file: Optional[UploadFile]):
     """
@@ -236,11 +323,14 @@ async def _get_image_from_request(request: Request, file: Optional[UploadFile]):
             filename = "base64_image.jpg"
     except HTTPException:
         raise
-    except (binascii.Error, PIL.UnidentifiedImageError, ValueError) as e:
+    except (binascii.Error, PIL.UnidentifiedImageError, ValueError, pydantic.ValidationError) as e:
         # Catch image decoding errors and return 400 Bad Request
         logger.warning(f"Invalid image request: {str(e)}")
         raise HTTPException(status_code=400, detail="Invalid request: Invalid image data or format")
-    except Exception:
+    except Exception as e:
+        # Check if it's already an HTTPException (raised from file size/body size checks)
+        if isinstance(e, HTTPException):
+            raise e
         logger.exception("Unexpected error while parsing image from request")
         raise HTTPException(status_code=500, detail="An internal error occurred while processing the request")
     

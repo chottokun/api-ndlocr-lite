@@ -1,5 +1,4 @@
 import numpy as np
-import pytest
 from src.core.engine import RecogLine
 
 def test_recog_line_init():

@@ -1,5 +1,4 @@
 import os
-import io
 import pytest
 from PIL import Image
 from src.core.engine import NDLOCREngine
