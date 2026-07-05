@@ -1,10 +1,8 @@
 import asyncio
-import base64
 import httpx
-import sys
 import os
 
-async def test_openai_api():
+async def run_openai_api_test():
     # Create a small white 1x1 pixel image in base64
     # (Simplified for testing, actual valid JPEG or PNG is better)
     # This is a 1x1 white PNG
@@ -53,6 +51,6 @@ if __name__ == "__main__":
                                 env={**os.environ, "PYTHONPATH": "."})
         time.sleep(15) # Wait for engine to initialize
 
-    asyncio.run(test_openai_api())
+    asyncio.run(run_openai_api_test())
 
     # Note: I'm not killing the server here to allow further tests if needed.

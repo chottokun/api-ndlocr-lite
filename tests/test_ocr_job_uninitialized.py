@@ -2,7 +2,6 @@ import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 import io
-from pathlib import Path
 import time
 
 from src.api.main import app, process_ocr_job, InMemoryJobStore

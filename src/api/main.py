@@ -62,6 +62,8 @@ def _engine_result_to_ocr_page(result: Dict[str, Any], index: int = 0) -> OCRPag
                 text=line["text"],
                 confidence=line["confidence"],
                 boundingBox=line["boundingBox"],
+                isVertical=line.get("isVertical"),
+                isTextline=line.get("isTextline"),
                 class_index=line.get("class_index")
             ) for line in result["lines"]
         ]
@@ -178,12 +180,7 @@ async def create_ocr_job(
     Accepts an image, initializes a background job, and returns a job_id for status polling.
     """
     # Extract image first to ensure it's valid before accepting the job
-    try:
-        img, filename = await _get_image_from_request(request, file)
-    except Exception as e:
-        if isinstance(e, HTTPException):
-            raise e
-        raise e
+    img, filename = await _get_image_from_request(request, file)
     
     job_id = str(uuid.uuid4())
     job_store.set(job_id, OCRJobResult(job_id=job_id, status="pending"))
@@ -206,7 +203,7 @@ async def get_ocr_job(job_id: str, job_store: InMemoryJobStore = Depends(get_job
 @app.post("/v1/chat/completions", response_model=ChatCompletionResponse)
 async def openai_vision_endpoint(
     request: ChatCompletionRequest,
-    engine: NDLOCREngine = Depends(get_engine),
+    engine: Optional[NDLOCREngine] = Depends(get_engine),
 ):
     """
     OpenAI-compatible Vision API endpoint.
@@ -271,7 +268,12 @@ async def openai_vision_endpoint(
                 "total_tokens": len(result["text"])
             }
         )
-    except (binascii.Error, PIL.UnidentifiedImageError, ValueError, pydantic.ValidationError) as e:
+    except HTTPException:
+        raise
+    except pydantic.ValidationError:
+        logger.exception("ValidationError occurred during OpenAI-compatible OCR processing")
+        raise HTTPException(status_code=500, detail="An internal error occurred during OCR processing")
+    except (binascii.Error, PIL.UnidentifiedImageError, ValueError) as e:
         logger.warning(f"Invalid image in OpenAI request: {str(e)}")
         raise HTTPException(status_code=400, detail="Invalid request: Invalid image data or format")
     except Exception:
