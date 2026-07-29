@@ -153,10 +153,16 @@ async def ocr_endpoint(
     if engine is None:
         raise HTTPException(status_code=503, detail="Engine not initialized")
 
+    if await request.is_disconnected():
+        raise HTTPException(status_code=499, detail="Client closed connection")
+
     try:
         # Run CPU-bound OCR processing in a thread pool to avoid blocking the event loop
         loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(None, engine.ocr, img, filename)
+
+        if await request.is_disconnected():
+            raise HTTPException(status_code=499, detail="Client closed connection")
 
         # Convert and return response
         page = _engine_result_to_ocr_page(result)
@@ -182,6 +188,9 @@ async def create_ocr_job(
     # Extract image first to ensure it's valid before accepting the job
     img, filename = await _get_image_from_request(request, file)
     
+    if await request.is_disconnected():
+        raise HTTPException(status_code=499, detail="Client closed connection")
+
     job_id = str(uuid.uuid4())
     job_store.set(job_id, OCRJobResult(job_id=job_id, status="pending"))
     
@@ -202,6 +211,7 @@ async def get_ocr_job(job_id: str, job_store: InMemoryJobStore = Depends(get_job
 
 @app.post("/v1/chat/completions", response_model=ChatCompletionResponse)
 async def openai_vision_endpoint(
+    raw_request: Request,
     request: ChatCompletionRequest,
     engine: Optional[NDLOCREngine] = Depends(get_engine),
 ):
@@ -211,6 +221,9 @@ async def openai_vision_endpoint(
     """
     if engine is None:
         raise HTTPException(status_code=503, detail="Engine not initialized")
+
+    if await raw_request.is_disconnected():
+        raise HTTPException(status_code=499, detail="Client closed connection")
 
     img_data = None
     for message in request.messages:
@@ -235,9 +248,15 @@ async def openai_vision_endpoint(
         if img.width * img.height > MAX_PIXELS:
             raise HTTPException(status_code=400, detail="Image dimensions too large")
 
+        if await raw_request.is_disconnected():
+            raise HTTPException(status_code=499, detail="Client closed connection")
+
         # Run OCR
         loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(None, engine.ocr, img, "openai_image.jpg")
+
+        if await raw_request.is_disconnected():
+            raise HTTPException(status_code=499, detail="Client closed connection")
 
         # Format response
         return ChatCompletionResponse(
@@ -289,12 +308,17 @@ async def _get_image_from_request(request: Request, file: Optional[UploadFile]):
 
     Includes security checks for body size, file size, and image dimensions.
     """
+    from starlette.requests import ClientDisconnect
     img = None
     filename = "image.jpg"
     try:
         if file:
             # Handle multipart/form-data
-            contents = await file.read(MAX_IMAGE_SIZE + 1)
+            try:
+                contents = await file.read(MAX_IMAGE_SIZE + 1)
+            except ClientDisconnect:
+                logger.warning("Client disconnected during file upload")
+                raise HTTPException(status_code=499, detail="Client closed connection")
             if len(contents) > MAX_IMAGE_SIZE:
                 raise HTTPException(status_code=413, detail="File too large")
             img = Image.open(io.BytesIO(contents))
@@ -306,10 +330,14 @@ async def _get_image_from_request(request: Request, file: Optional[UploadFile]):
                 raise HTTPException(status_code=413, detail="Request body too large")
 
             body_bytes = b""
-            async for chunk in request.stream():
-                body_bytes += chunk
-                if len(body_bytes) > MAX_BODY_SIZE:
-                    raise HTTPException(status_code=413, detail="Request body too large")
+            try:
+                async for chunk in request.stream():
+                    body_bytes += chunk
+                    if len(body_bytes) > MAX_BODY_SIZE:
+                        raise HTTPException(status_code=413, detail="Request body too large")
+            except ClientDisconnect:
+                logger.warning("Client disconnected during body streaming")
+                raise HTTPException(status_code=499, detail="Client closed connection")
 
             if not body_bytes:
                 raise HTTPException(status_code=400, detail="Empty request body")
