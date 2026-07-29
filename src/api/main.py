@@ -211,6 +211,7 @@ async def get_ocr_job(job_id: str, job_store: InMemoryJobStore = Depends(get_job
 
 @app.post("/v1/chat/completions", response_model=ChatCompletionResponse)
 async def openai_vision_endpoint(
+    raw_request: Request,
     request: ChatCompletionRequest,
     engine: Optional[NDLOCREngine] = Depends(get_engine),
 ):
@@ -220,6 +221,9 @@ async def openai_vision_endpoint(
     """
     if engine is None:
         raise HTTPException(status_code=503, detail="Engine not initialized")
+
+    if await raw_request.is_disconnected():
+        raise HTTPException(status_code=499, detail="Client closed connection")
 
     img_data = None
     for message in request.messages:
@@ -244,9 +248,15 @@ async def openai_vision_endpoint(
         if img.width * img.height > MAX_PIXELS:
             raise HTTPException(status_code=400, detail="Image dimensions too large")
 
+        if await raw_request.is_disconnected():
+            raise HTTPException(status_code=499, detail="Client closed connection")
+
         # Run OCR
         loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(None, engine.ocr, img, "openai_image.jpg")
+
+        if await raw_request.is_disconnected():
+            raise HTTPException(status_code=499, detail="Client closed connection")
 
         # Format response
         return ChatCompletionResponse(

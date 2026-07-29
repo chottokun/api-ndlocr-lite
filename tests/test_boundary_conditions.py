@@ -114,3 +114,92 @@ def test_engine_shutdown_with_pending_tasks():
     # Submitting a task post-shutdown should raise a RuntimeError
     with pytest.raises(RuntimeError):
         engine.executor.submit(dummy_task)
+
+
+def test_openai_vision_endpoint_early_disconnect(monkeypatch):
+    # Test OpenAI chat completion endpoint when client is disconnected early
+    async def mock_is_disconnected(self):
+        return True
+
+    monkeypatch.setattr(Request, "is_disconnected", mock_is_disconnected)
+
+    img = Image.new('RGB', (50, 50), color=(255, 255, 255))
+    img_byte_arr = io.BytesIO()
+    img.save(img_byte_arr, format='JPEG')
+    import base64
+    b64_str = "data:image/jpeg;base64," + base64.b64encode(img_byte_arr.getvalue()).decode()
+
+    payload = {
+        "model": "ndlocr-lite",
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": b64_str}}
+                ]
+            }
+        ]
+    }
+
+    with TestClient(app) as client:
+        response = client.post("/v1/chat/completions", json=payload)
+        assert response.status_code == 499
+        assert response.json()["detail"] == "Client closed connection"
+
+
+def test_openai_vision_endpoint_post_run_disconnect(monkeypatch):
+    # Test OpenAI chat completion endpoint when client disconnects right after engine.ocr runs
+    disconnect_call_count = 0
+
+    async def mock_is_disconnected(self):
+        nonlocal disconnect_call_count
+        disconnect_call_count += 1
+        return disconnect_call_count > 1
+
+    monkeypatch.setattr(Request, "is_disconnected", mock_is_disconnected)
+
+    img = Image.new('RGB', (50, 50), color=(255, 255, 255))
+    img_byte_arr = io.BytesIO()
+    img.save(img_byte_arr, format='JPEG')
+    import base64
+    b64_str = "data:image/jpeg;base64," + base64.b64encode(img_byte_arr.getvalue()).decode()
+
+    payload = {
+        "model": "ndlocr-lite",
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": b64_str}}
+                ]
+            }
+        ]
+    }
+
+    with TestClient(app) as client:
+        response = client.post("/v1/chat/completions", json=payload)
+        assert response.status_code == 499
+        assert response.json()["detail"] == "Client closed connection"
+
+
+def test_create_ocr_job_early_disconnect(monkeypatch):
+    # Test /v1/ocr/jobs endpoint when client is disconnected early
+    async def mock_is_disconnected(self):
+        return True
+
+    monkeypatch.setattr(Request, "is_disconnected", mock_is_disconnected)
+
+    img = Image.new('RGB', (50, 50), color=(255, 255, 255))
+    img_byte_arr = io.BytesIO()
+    img.save(img_byte_arr, format='JPEG')
+    img_bytes = img_byte_arr.getvalue()
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/ocr/jobs",
+            files={"file": ("test.jpg", img_bytes, "image/jpeg")}
+        )
+        assert response.status_code == 499
+        assert response.json()["detail"] == "Client closed connection"
+
+
