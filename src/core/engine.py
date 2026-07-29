@@ -129,7 +129,7 @@ class NDLOCREngine:
 
     def shutdown(self):
         """Shuts down the internal thread pool."""
-        self.executor.shutdown()
+        self.executor.shutdown(wait=False, cancel_futures=True)
 
     def _process_cascade(self, alllineobj: List[RecogLine], is_cascade: bool = True) -> List[str]:
         """

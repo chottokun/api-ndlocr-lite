@@ -14,3 +14,12 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+
+# Example configuration for integration with LibreChat or other services:
+#
+#   librechat:
+#     image: ghcr.io/danny-avila/librechat:latest
+#     ...
+#     depends_on:
+#       api:
+#         condition: service_healthy

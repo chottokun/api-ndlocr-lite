@@ -1,0 +1,60 @@
+name: Docker CI Pipeline
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  docker-integration-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        run: |
+          docker build -t api-ndlocr-lite:latest .
+
+      - name: Start API container
+        run: |
+          docker run -d --name ndlocr-api -p 8001:8000 api-ndlocr-lite:latest
+
+      - name: Wait for API to become healthy
+        run: |
+          echo "Waiting for API startup (this may take a few seconds)..."
+          # Poll the healthcheck endpoint up to 12 times with 5s sleep (1 minute total max)
+          for i in {1..12}; do
+            if curl -s -f http://localhost:8001/health; then
+              echo "API is healthy!"
+              exit 0
+            fi
+            echo "Waiting... (attempt $i/12)"
+            sleep 5
+          done
+          echo "Error: API did not become healthy in time."
+          docker logs ndlocr-api
+          exit 1
+
+      - name: Run basic API smoke test
+        run: |
+          # Query health endpoint
+          HEALTH_STATUS=$(curl -s http://localhost:8001/health)
+          echo "Health response: $HEALTH_STATUS"
+          if [[ "$HEALTH_STATUS" != *"ok"* ]]; then
+            echo "Unexpected health status response"
+            exit 1
+          fi
+
+      - name: Stop container
+        if: always()
+        run: |
+          docker stop ndlocr-api || true
+          docker rm ndlocr-api || true
