@@ -1,7 +1,6 @@
-import asyncio
 import io
 import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import MagicMock, AsyncMock
 from starlette.requests import ClientDisconnect
 from starlette.requests import Request
 from starlette.datastructures import Headers

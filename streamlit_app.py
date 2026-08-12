@@ -4,9 +4,8 @@ import time
 import json
 import io
 import os
-import base64
 from PIL import Image, ImageDraw, ImageFont
-from typing import List, Dict, Any, Optional
+from typing import Dict, Any, Optional
 
 # --- Configuration & Styling ---
 st.set_page_config(
@@ -97,13 +96,14 @@ def draw_bounding_boxes(image: Image.Image, ocr_data: Dict[str, Any], show_label
     # Try to load a font, fallback to default
     try:
         font = ImageFont.truetype("DejaVuSans.ttf", 14)
-    except:
+    except Exception:
         font = ImageFont.load_default()
 
     for page in ocr_data.get("pages", []):
         for line in page.get("lines", []):
             box = line.get("boundingBox")
-            if not box or len(box) < 2: continue
+            if not box or len(box) < 2:
+                continue
             
             # Flatten box if needed [[x1,y1], [x2,y2]] -> [x1,y1,x2,y2]
             poly = [coord for pt in box for coord in pt]
@@ -139,7 +139,7 @@ def check_health(api_url: str) -> Dict[str, Any]:
             response = client.get(f"{api_url}/health")
             if response.status_code == 200:
                 return response.json()
-    except:
+    except Exception:
         pass
     return {"status": "offline", "engine_ready": False}
 
@@ -225,8 +225,8 @@ with upload_tab:
                         # Calculate avg confidence
                         confs = []
                         for p in result.get("pages", []):
-                            for l in p.get("lines", []):
-                                confs.append(l.get("confidence", 0))
+                            for line_item in p.get("lines", []):
+                                confs.append(line_item.get("confidence", 0))
                         
                         avg_conf = sum(confs) / len(confs) if confs else 0
                         
