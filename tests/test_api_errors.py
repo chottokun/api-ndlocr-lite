@@ -76,3 +76,22 @@ def test_ocr_job_engine_failure_integration():
                 time.sleep(0.1)
 
             assert failed, "Job should have failed due to engine exception"
+
+def test_ocr_endpoint_internal_error_integration():
+    # Create a small valid image for the request
+    img = Image.new('RGB', (100, 100), color=(255, 255, 255))
+    img_byte_arr = io.BytesIO()
+    img.save(img_byte_arr, format='JPEG')
+    img_bytes = img_byte_arr.getvalue()
+
+    with TestClient(app) as client:
+        # Mock engine.ocr to raise exception
+        with patch.object(app.state.engine, 'ocr', side_effect=Exception("Simulated engine failure")):
+            response = client.post(
+                "/v1/ocr",
+                files={"file": ("test.jpg", img_bytes, "image/jpeg")}
+            )
+
+            assert response.status_code == 500
+            data = response.json()
+            assert "An internal error occurred during OCR processing" in data["detail"]
