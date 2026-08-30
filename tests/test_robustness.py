@@ -35,9 +35,27 @@ def test_engine_high_resolution(engine):
     result = engine.ocr(img, img_name="large_empty.jpg")
     assert "text" in result
 
+def test_engine_tiny_image_with_text(engine):
+    # Test with a tiny image containing text (triggers fallback path in DEIM/eval_xml)
+    from PIL import ImageDraw, ImageFont
+    img = Image.new('RGB', (50, 50), color=(255, 255, 255))
+    draw = ImageDraw.Draw(img)
+    try:
+        font = ImageFont.load_default()
+    except Exception:
+        font = None
+    draw.text((5, 15), "AB", fill=(0, 0, 0), font=font)
+    result = engine.ocr(img, img_name="tiny_ab.jpg")
+    assert "text" in result
+    assert "lines" in result
+    # Ensure it didn't raise an unhandled exception
+    assert isinstance(result["lines"], list)
+
+
 def test_engine_shutdown(engine):
     # Verify shutdown doesn't crash
     engine.shutdown()
     # Re-initialize for subsequent tests if fixture wasn't module scope or if needed
     # But here it's module scope, so this might be better as a standalone test at the end.
     pass
+
