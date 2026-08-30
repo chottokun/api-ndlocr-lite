@@ -89,8 +89,17 @@ class NDLOCREngine:
         self.recognizer50 = None
         
         # ThreadPoolExecutor for parallelizing character recognition across lines
+        # Allow override via environment variable OCR_MAX_WORKERS, or use a bounded default.
+        # Too many concurrent threads calling ORT sessions on CPU causes high contention and thrashing.
+        max_workers_env = os.getenv("OCR_MAX_WORKERS")
+        if max_workers_env:
+            max_workers = int(max_workers_env)
+        else:
+            cpu_count = os.cpu_count() or 4
+            max_workers = min(4, cpu_count)
+
         self.executor = ThreadPoolExecutor(
-            max_workers=os.cpu_count() or 4,
+            max_workers=max_workers,
             thread_name_prefix="ocr_worker"
         )
 
@@ -224,14 +233,14 @@ class NDLOCREngine:
         classeslist = list(self.detector.classes.values())
         
         # Prepare data for NDL-style XML conversion
-        resultobj = [dict(), dict()]
-        resultobj[0][0] = list()
-        for i in range(17):
-            resultobj[1][i] = []
+        resultobj = [
+            {0: []},
+            {i: [] for i in range(17)}
+        ]
         for det in detections:
             xmin, ymin, xmax, ymax = det["box"]
             conf = det["confidence"]
-            char_count = det.get("pred_char_count", 100.0) # v1.2.1 uses char_count in resultobj
+            char_count = det.get("pred_char_count", 100.0)  # v1.2.1 uses char_count in resultobj
             if det["class_index"] == 0:
                 resultobj[0][0].append([xmin, ymin, xmax, ymax])
             # v1.2.1 adds char_count here

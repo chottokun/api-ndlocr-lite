@@ -286,8 +286,8 @@ async def openai_vision_endpoint(
     try:
         # Remove data URI prefix if present
         header, encoded = img_data.split(",", 1) if "," in img_data else (None, img_data)
-        contents = base64.b64decode(encoded)
-        img = Image.open(io.BytesIO(contents))
+        contents = await asyncio.to_thread(base64.b64decode, encoded)
+        img = await asyncio.to_thread(Image.open, io.BytesIO(contents))
 
         # Dimension check
         if img.width * img.height > MAX_PIXELS:
@@ -366,7 +366,7 @@ async def _get_image_from_request(request: Request, file: Optional[UploadFile]):
                 raise HTTPException(status_code=499, detail="Client closed connection")
             if len(contents) > MAX_IMAGE_SIZE:
                 raise HTTPException(status_code=413, detail="File too large")
-            img = Image.open(io.BytesIO(contents))
+            img = await asyncio.to_thread(Image.open, io.BytesIO(contents))
             filename = file.filename or "uploaded_image.jpg"
         else:
             # Handle JSON body (Base64)
@@ -391,8 +391,8 @@ async def _get_image_from_request(request: Request, file: Optional[UploadFile]):
             ocr_req = OCRRequest(**body)
             # Remove data URI prefix if present
             header, encoded = ocr_req.image.split(",", 1) if "," in ocr_req.image else (None, ocr_req.image)
-            contents = base64.b64decode(encoded)
-            img = Image.open(io.BytesIO(contents))
+            contents = await asyncio.to_thread(base64.b64decode, encoded)
+            img = await asyncio.to_thread(Image.open, io.BytesIO(contents))
             filename = "base64_image.jpg"
     except HTTPException:
         raise
