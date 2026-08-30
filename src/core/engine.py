@@ -92,11 +92,15 @@ class NDLOCREngine:
         # Allow override via environment variable OCR_MAX_WORKERS, or use a bounded default.
         # Too many concurrent threads calling ORT sessions on CPU causes high contention and thrashing.
         max_workers_env = os.getenv("OCR_MAX_WORKERS")
+        cpu_count = os.cpu_count() or 4
+        default_workers = min(4, cpu_count)
         if max_workers_env:
-            max_workers = int(max_workers_env)
+            try:
+                max_workers = max(1, int(max_workers_env))
+            except ValueError:
+                max_workers = default_workers
         else:
-            cpu_count = os.cpu_count() or 4
-            max_workers = min(4, cpu_count)
+            max_workers = default_workers
 
         self.executor = ThreadPoolExecutor(
             max_workers=max_workers,
