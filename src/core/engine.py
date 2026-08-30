@@ -3,6 +3,9 @@ import os
 import numpy as np
 from PIL import Image
 from defusedxml import ElementTree as ET
+# defusedxmlはXMLパース専用でSubElementを提供しないため、
+# XML要素の生成には標準ライブラリを使用する（セキュリティリスクなし）
+from xml.etree.ElementTree import SubElement
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from concurrent.futures import ThreadPoolExecutor
@@ -277,7 +280,7 @@ class NDLOCREngine:
                 line_w = int(xmax - xmin)
                 line_h = int(ymax - ymin)
                 if line_w > 0 and line_h > 0:
-                    line_elem = ET.SubElement(page, "LINE")
+                    line_elem = SubElement(page, "LINE")
                     c_idx = int(det["class_index"])
                     type_name = classeslist[c_idx] if c_idx < len(classeslist) else "本文"
                     line_elem.set("TYPE", type_name)
