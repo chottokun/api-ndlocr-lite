@@ -14,77 +14,20 @@ import os
 import logging
 
 import time
-import threading
 from src.core.engine import NDLOCREngine
-from src.schemas.ocr import OCRResponse, OCRPage, OCRLine, OCRRequest, OCRJobResponse, OCRJobResult
+from src.schemas.ocr import OCRResponse, OCRPage, OCRLine, OCRJobResponse, OCRJobResult
 from src.schemas.openai import ChatCompletionRequest, ChatCompletionResponse, ChatCompletionChoice, ChatCompletionChoiceMessage
+from src.api.job_store import InMemoryJobStore
+from src.api.image_utils import (
+    _get_image_from_request,
+    MAX_IMAGE_SIZE as MAX_IMAGE_SIZE,
+    MAX_BODY_SIZE as MAX_BODY_SIZE,
+    MAX_PIXELS as MAX_PIXELS,
+)
 
 # Configure logging to provide visibility into API operations and background tasks
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-class InMemoryJobStore:
-    """
-    In-memory job store for OCR results.
-    Used to track the status and final output of asynchronous background jobs.
-    In a production environment, this should be replaced with a persistent store like Redis.
-    Includes time-to-live (TTL) eviction and LRU eviction to prevent unbounded memory growth.
-    """
-    def __init__(self, max_size: int = 1000, ttl_seconds: float = 3600.0):
-        self._jobs: Dict[str, OCRJobResult] = {}
-        self._timestamps: Dict[str, float] = {}  # job_id -> last access timestamp
-        self._lock = threading.Lock()
-        self._max_size = max_size
-        self._ttl_seconds = ttl_seconds
-
-    def _evict_expired(self, now: float):
-        """Removes expired jobs from the store. Must be called under lock."""
-        expired_ids = [
-            job_id for job_id, ts in list(self._timestamps.items())
-            if now - ts > self._ttl_seconds
-        ]
-        for job_id in expired_ids:
-            self._jobs.pop(job_id, None)
-            self._timestamps.pop(job_id, None)
-
-    def _evict_lru(self):
-        """Removes the oldest (least recently accessed) job. Must be called under lock."""
-        if not self._timestamps:
-            return
-        # Find key with the minimum timestamp
-        oldest_job_id = min(self._timestamps, key=self._timestamps.get)
-        self._jobs.pop(oldest_job_id, None)
-        self._timestamps.pop(oldest_job_id, None)
-
-    def get(self, job_id: str) -> Optional[OCRJobResult]:
-        """Retrieves a job result by its ID and updates its access time."""
-        with self._lock:
-            now = time.time()
-            self._evict_expired(now)
-            if job_id in self._jobs:
-                self._timestamps[job_id] = now
-                return self._jobs[job_id]
-            return None
-
-    def set(self, job_id: str, result: OCRJobResult):
-        """Stores or updates a job result, evicting expired or LRU items if full."""
-        with self._lock:
-            now = time.time()
-            self._evict_expired(now)
-
-            # If still over limit and adding a new key would exceed max_size
-            if len(self._jobs) >= self._max_size and job_id not in self._jobs:
-                self._evict_lru()
-
-            self._jobs[job_id] = result
-            self._timestamps[job_id] = now
-
-    def exists(self, job_id: str) -> bool:
-        """Checks if a job with the given ID exists."""
-        with self._lock:
-            now = time.time()
-            self._evict_expired(now)
-            return job_id in self._jobs
 
 def _engine_result_to_ocr_page(result: Dict[str, Any], index: int = 0) -> OCRPage:
     """
@@ -112,11 +55,6 @@ def _engine_result_to_ocr_page(result: Dict[str, Any], index: int = 0) -> OCRPag
         ]
     )
 
-# Security and resource limits
-# These limits prevent DoS attacks via large files or excessive pixel counts.
-MAX_IMAGE_SIZE = int(os.getenv("MAX_IMAGE_SIZE", 10 * 1024 * 1024)) # Default 10MB
-MAX_BODY_SIZE = int(os.getenv("MAX_BODY_SIZE", 15 * 1024 * 1024))   # Default 15MB
-MAX_PIXELS = int(os.getenv("MAX_PIXELS", 100_000_000))            # Default 100MP
 JOB_STORE_MAX_SIZE = int(os.getenv("JOB_STORE_MAX_SIZE", "1000"))
 JOB_STORE_TTL_SECONDS = float(os.getenv("JOB_STORE_TTL_SECONDS", "3600.0"))
 
@@ -343,78 +281,6 @@ async def openai_vision_endpoint(
     except Exception:
         logger.exception("An error occurred during OpenAI-compatible OCR processing")
         raise HTTPException(status_code=500, detail="An internal error occurred during OCR processing")
-
-async def _get_image_from_request(request: Request, file: Optional[UploadFile]):
-    """
-    Internal helper to extract a PIL Image from the HTTP request.
-    Supports:
-    - Multipart file upload (via 'file' field)
-    - JSON body with base64 encoded image (via 'image' field)
-
-    Includes security checks for body size, file size, and image dimensions.
-    """
-    from starlette.requests import ClientDisconnect
-    img = None
-    filename = "image.jpg"
-    try:
-        if file:
-            # Handle multipart/form-data
-            try:
-                contents = await file.read(MAX_IMAGE_SIZE + 1)
-            except ClientDisconnect:
-                logger.warning("Client disconnected during file upload")
-                raise HTTPException(status_code=499, detail="Client closed connection")
-            if len(contents) > MAX_IMAGE_SIZE:
-                raise HTTPException(status_code=413, detail="File too large")
-            img = await asyncio.to_thread(Image.open, io.BytesIO(contents))
-            filename = file.filename or "uploaded_image.jpg"
-        else:
-            # Handle JSON body (Base64)
-            cl = request.headers.get("Content-Length")
-            if cl and int(cl) > MAX_BODY_SIZE:
-                raise HTTPException(status_code=413, detail="Request body too large")
-
-            body_bytes = b""
-            try:
-                async for chunk in request.stream():
-                    body_bytes += chunk
-                    if len(body_bytes) > MAX_BODY_SIZE:
-                        raise HTTPException(status_code=413, detail="Request body too large")
-            except ClientDisconnect:
-                logger.warning("Client disconnected during body streaming")
-                raise HTTPException(status_code=499, detail="Client closed connection")
-
-            if not body_bytes:
-                raise HTTPException(status_code=400, detail="Empty request body")
-
-            body = json.loads(body_bytes)
-            ocr_req = OCRRequest(**body)
-            # Remove data URI prefix if present
-            header, encoded = ocr_req.image.split(",", 1) if "," in ocr_req.image else (None, ocr_req.image)
-            contents = await asyncio.to_thread(base64.b64decode, encoded)
-            img = await asyncio.to_thread(Image.open, io.BytesIO(contents))
-            filename = "base64_image.jpg"
-    except HTTPException:
-        raise
-    except (binascii.Error, PIL.UnidentifiedImageError, ValueError, pydantic.ValidationError) as e:
-        # Catch image decoding errors and return 400 Bad Request
-        logger.warning(f"Invalid image request: {str(e)}")
-        raise HTTPException(status_code=400, detail="Invalid request: Invalid image data or format")
-    except Exception as e:
-        # Check if it's already an HTTPException (raised from file size/body size checks)
-        if isinstance(e, HTTPException):
-            raise e
-        logger.exception("Unexpected error while parsing image from request")
-        raise HTTPException(status_code=500, detail="An internal error occurred while processing the request")
-    
-    if img is None:
-        raise HTTPException(status_code=400, detail="No image provided")
-
-    # Final dimension check to prevent memory exhaustion
-    if img.width * img.height > MAX_PIXELS:
-        raise HTTPException(status_code=400, detail="Image dimensions too large")
-
-    return img, filename
 
 @app.get("/health")
 async def health(request: Request):
