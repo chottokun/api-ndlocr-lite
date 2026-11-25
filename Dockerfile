@@ -10,7 +10,9 @@ RUN apt-get update && apt-get install -y \
     git \
     curl \
     && rm -rf /var/lib/apt/lists/* \
-    && python -m pip install --no-cache-dir --upgrade "setuptools>=78.1.1" pip
+    && python -m pip uninstall -y setuptools pip || true \
+    && rm -rf /usr/local/lib/python3.13/ensurepip \
+    && find / -iname "*setuptools*" 2>/dev/null || true
 
 # Install uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
