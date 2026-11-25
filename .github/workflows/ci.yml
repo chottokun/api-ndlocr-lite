@@ -5,55 +5,120 @@ on:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
+  schedule:
+    # 毎週月曜 03:00 UTC に定期的な脆弱性スキャンを実行する
+    - cron: '0 3 * * 1'
+  workflow_dispatch:
 
 jobs:
-  docker-integration-test:
+  unit-and-security-tests:
+    name: ユニット・統合・脆弱性テスト
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: リポジトリのチェックアウト
         uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Set up Docker Buildx
+      - name: uv と Python 環境のセットアップ
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          python-version: "3.13"
+
+      - name: 依存関係のインストール
+        run: uv sync --frozen
+
+      - name: pytest の実行（ユニット・統合・セキュリティテスト）
+        run: PYTHONPATH=. uv run pytest -v
+
+  security-scan:
+    name: セキュリティ・脆弱性スキャン
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: リポジトリのチェックアウト
+        uses: actions/checkout@v4
+
+      - name: uv と Python 環境のセットアップ
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          python-version: "3.13"
+
+      - name: 依存関係のインストール
+        run: uv sync --frozen
+
+      - name: Bandit による静的セキュリティ解析 (SAST)
+        run: uv run bandit -r src/ -ll
+
+      - name: pip-audit による依存パッケージ脆弱性スキャン
+        run: uv run pip-audit --desc off
+
+  docker-integration-test:
+    name: Docker ビルド・脆弱性スキャン・結合テスト
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: リポジトリのチェックアウト
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Docker Buildx のセットアップ
         uses: docker/setup-buildx-action@v3
 
-      - name: Build Docker image
-        run: |
-          docker build -t api-ndlocr-lite:latest .
+      - name: Docker イメージのビルド
+        run: docker build -t api-ndlocr-lite:latest .
 
-      - name: Start API container
-        run: |
-          docker run -d --name ndlocr-api -p 8001:8000 api-ndlocr-lite:latest
+      - name: Trivy によるコンテナイメージ脆弱性スキャン
+        uses: aquasecurity/trivy-action@0.30.0
+        with:
+          image-ref: 'api-ndlocr-lite:latest'
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
 
-      - name: Wait for API to become healthy
+      - name: API コンテナの起動
+        run: docker run -d --name ndlocr-api -p 8001:8000 api-ndlocr-lite:latest
+
+      - name: API のヘルスチェック待機
         run: |
-          echo "Waiting for API startup (this may take a few seconds)..."
-          # Poll the healthcheck endpoint up to 12 times with 5s sleep (1 minute total max)
+          echo "API 起動を待機中..."
           for i in {1..12}; do
             if curl -s -f http://localhost:8001/health; then
-              echo "API is healthy!"
+              echo "API は正常に起動しました"
               exit 0
             fi
-            echo "Waiting... (attempt $i/12)"
+            echo "待機中... ($i/12)"
             sleep 5
           done
-          echo "Error: API did not become healthy in time."
+          echo "エラー: API がタイムアウトまでに起動しませんでした。"
           docker logs ndlocr-api
           exit 1
 
-      - name: Run basic API smoke test
+      - name: API スモークテスト（ヘルスチェック・OCR 推論）
         run: |
-          # Query health endpoint
-          HEALTH_STATUS=$(curl -s http://localhost:8001/health)
+          HEALTH_STATUS=$(curl -s -f http://localhost:8001/health)
           echo "Health response: $HEALTH_STATUS"
           if [[ "$HEALTH_STATUS" != *"ok"* ]]; then
-            echo "Unexpected health status response"
+            echo "ヘルスチェックレスポンスが不正です"
             exit 1
           fi
 
-      - name: Stop container
+          OCR_RESPONSE=$(curl -s -f -X POST \
+            -F "file=@extern/ndlocr-lite/resource/digidepo_3048008_0025.jpg" \
+            http://localhost:8001/v1/ocr)
+          echo "OCR response snippet: ${OCR_RESPONSE:0:300}"
+          if [[ "$OCR_RESPONSE" != *"第8章"* ]]; then
+            echo "OCR レスポンスに期待される文字列が含まれていません"
+            exit 1
+          fi
+
+      - name: コンテナの停止と削除
         if: always()
         run: |
           docker stop ndlocr-api || true

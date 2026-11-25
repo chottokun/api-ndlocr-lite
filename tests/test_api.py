@@ -122,7 +122,7 @@ def test_ocr_no_image(client):
 
 def test_ocr_engine_not_initialized(client, sample_image_path, monkeypatch):
     from src.api import main
-    monkeypatch.setattr(main.app.state, "engine", None)
+    monkeypatch.setitem(main.app.state._state, "engine", None)
 
     with open(sample_image_path, "rb") as f:
         response = client.post(
@@ -134,7 +134,7 @@ def test_ocr_engine_not_initialized(client, sample_image_path, monkeypatch):
 
 def test_ocr_job_engine_not_initialized(client, sample_image_path, monkeypatch):
     from src.api import main
-    monkeypatch.setattr(main.app.state, "engine", None)
+    monkeypatch.setitem(main.app.state._state, "engine", None)
 
     with open(sample_image_path, "rb") as f:
         response = client.post(
