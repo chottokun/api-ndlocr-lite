@@ -34,7 +34,8 @@ ENV PYTHONPATH="/app:/app/extern/ndlocr-lite/src"
 COPY . .
 
 # Install dependencies into /opt/venv using uv pip
-# We pin onnxruntime-gpu specifically for CUDA 12 support
+# Pin onnxruntime-gpu to a CUDA 12 build matching the CUDA 12.6 base image
+# (newer releases require CUDA 13 and fail to load the CUDA provider here)
 RUN uv pip install \
     "dill==0.3.8" \
     "fastapi>=0.133.1" \
@@ -51,7 +52,10 @@ RUN uv pip install \
     "reportlab==4.2.5" \
     "tqdm==4.66.4" \
     "uvicorn>=0.41.0" \
-    "onnxruntime-gpu>=1.19.0"
+    "defusedxml>=0.7.1" \
+    "opencv-python-headless" \
+    "python-dotenv>=1.0.0" \
+    "onnxruntime-gpu==1.22.0"
 
 # Expose API port
 EXPOSE 8000
