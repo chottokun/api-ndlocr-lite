@@ -1,5 +1,6 @@
 import sys
 import os
+import threading
 import numpy as np
 from PIL import Image
 from defusedxml import ElementTree as ET
@@ -21,6 +22,13 @@ from deim import DEIM  # noqa: E402
 from parseq import PARSEQ  # noqa: E402
 from reading_order.xy_cut.eval import eval_xml  # noqa: E402
 from ndl_parser import convert_to_xml_string3  # noqa: E402
+from character_inclusion import apply_character_inclusion  # noqa: E402
+from ocr import build_markdown_text_from_page, _normalize_markdown_styles  # noqa: E402
+from tablecenternet import (  # noqa: E402
+    TableCenterNetRecognizer,
+    cells_to_markdown,
+    infer_tables_from_page,
+)
 
 class RecogLine:
     """
@@ -62,6 +70,10 @@ class NDLOCREngine:
         det_conf_threshold: float = 0.25,
         det_iou_threshold: float = 0.2,
         enable_tcy: bool = False,
+        enable_character_inclusion: bool = False,
+        enable_rich_markdown: bool = False,
+        enable_table_structure: bool = False,
+        table_weights: Optional[str] = None,
     ):
         """
         Initializes the engine with model paths and detection thresholds.
@@ -69,15 +81,19 @@ class NDLOCREngine:
         """
         self.device = device
         self.enable_tcy = enable_tcy
+        self.enable_character_inclusion = enable_character_inclusion
+        self.enable_rich_markdown = enable_rich_markdown
+        self.enable_table_structure = enable_table_structure
         
-        # Default paths pointing into the ndlocr-lite submodule (updated to 24px models)
+        # ndlocr-lite 2.0.0 (v2) のデフォルトモデルパス
         base_dir = SUBMODULE_SRC
-        self.det_weights = det_weights or str(base_dir / "model" / "deim-s-1024x1024.onnx")
+        self.det_weights = det_weights or str(base_dir / "model" / "deim-s-1024x1024-261124.onnx")
         self.det_classes = det_classes or str(base_dir / "config" / "ndl.yaml")
-        self.rec_weights = rec_weights or str(base_dir / "model" / "parseq-ndl-24x768-100-tiny-153epoch-tegaki3-r8data-202604.onnx")
-        self.rec_weights30 = rec_weights30 or str(base_dir / "model" / "parseq-ndl-24x256-30-tiny-189epoch-tegaki3-r8data-202604.onnx")
-        self.rec_weights50 = rec_weights50 or str(base_dir / "model" / "parseq-ndl-24x384-50-tiny-300epoch-tegaki3-r8data-202604.onnx")
+        self.rec_weights = rec_weights or str(base_dir / "model" / "parseq-ndl-24x768-100-tiny-153epoch-261124.onnx")
+        self.rec_weights30 = rec_weights30 or str(base_dir / "model" / "parseq-ndl-24x256-30-tiny-499epoch-261124.onnx")
+        self.rec_weights50 = rec_weights50 or str(base_dir / "model" / "parseq-ndl-24x384-50-tiny-278epoch-261124.onnx")
         self.rec_classes = rec_classes or str(base_dir / "config" / "NDLmoji.yaml")
+        self.table_weights = table_weights or str(base_dir / "model" / "tablecenternet_s_800_v3.onnx")
         
         self.det_score_threshold = det_score_threshold
         self.det_conf_threshold = det_conf_threshold
@@ -87,6 +103,8 @@ class NDLOCREngine:
         self.recognizer100 = None
         self.recognizer30 = None
         self.recognizer50 = None
+        self.table_recognizer = None
+        self._table_recognizer_lock = threading.Lock()
         
         # ThreadPoolExecutor for parallelizing character recognition across lines
         # Allow override via environment variable OCR_MAX_WORKERS, or use a bounded default.
@@ -125,6 +143,22 @@ class NDLOCREngine:
         self.recognizer100 = self._get_recognizer(self.rec_weights)
         self.recognizer30 = self._get_recognizer(self.rec_weights30)
         self.recognizer50 = self._get_recognizer(self.rec_weights50)
+
+        if self.enable_table_structure:
+            self._ensure_table_recognizer()
+
+    def _ensure_table_recognizer(self):
+        """表構造化モデルをスレッドセーフに遅延ロードする。"""
+        if self.table_recognizer is not None:
+            return self.table_recognizer
+        with self._table_recognizer_lock:
+            if self.table_recognizer is None:
+                print(f"[INFO] Loading table recognizer from {self.table_weights}")
+                self.table_recognizer = TableCenterNetRecognizer(
+                    model_path=self.table_weights,
+                    device=self.device,
+                )
+        return self.table_recognizer
 
     def _get_recognizer(self, weights_path: str):
         """Helper to initialize a PARSEQ recognizer with a specific weight file."""
@@ -221,7 +255,14 @@ class NDLOCREngine:
         targetdflistall = sorted(targetdflistall)
         return [t.pred_str for t in targetdflistall]
 
-    def ocr(self, pil_image: Image.Image, img_name: str = "image.jpg") -> Dict[str, Any]:
+    def ocr(
+        self,
+        pil_image: Image.Image,
+        img_name: str = "image.jpg",
+        enable_character_inclusion: Optional[bool] = None,
+        enable_rich_markdown: Optional[bool] = None,
+        enable_table_structure: Optional[bool] = None,
+    ) -> Dict[str, Any]:
         """
         Main OCR pipeline.
         1. Layout Detection
@@ -245,10 +286,11 @@ class NDLOCREngine:
             xmin, ymin, xmax, ymax = det["box"]
             conf = det["confidence"]
             char_count = det.get("pred_char_count", 100.0)  # v1.2.1 uses char_count in resultobj
+            markdown_style = det.get("pred_markdown_style", 0.0)  # v2.0.0 で追加された Markdown スタイル予測値
             if det["class_index"] == 0:
                 resultobj[0][0].append([xmin, ymin, xmax, ymax])
-            # v1.2.1 adds char_count here
-            resultobj[1][det["class_index"]].append([xmin, ymin, xmax, ymax, conf, char_count])
+            # v2.0.0 に合わせて markdown_style も渡す
+            resultobj[1][det["class_index"]].append([xmin, ymin, xmax, ymax, conf, char_count, markdown_style])
             
         # Security: Sanitize img_name to prevent XML injection
         safe_img_name = "".join(c for c in img_name if c.isalnum() or c in "._- ")
@@ -304,6 +346,8 @@ class NDLOCREngine:
                     line_elem.set("CONF", f"{det['confidence']:0.3f}")
                     pred_char_cnt = det.get("pred_char_count", 100.0)
                     line_elem.set("PRED_CHAR_CNT", f"{pred_char_cnt:0.3f}")
+                    pred_markdown_style = det.get("pred_markdown_style", 0.0)
+                    line_elem.set("PRED_MARKDOWN", f"{pred_markdown_style:0.0f}")
                     if line_h > line_w:
                         tatelinecnt += 1
                     alllinecnt += 1
@@ -313,6 +357,15 @@ class NDLOCREngine:
 
         # 4. Recognition (using cascade and thread pool)
         resultlinesall = self._process_cascade(alllineobj, is_cascade=True)
+
+        # 異体字包摂（有効時のみ適用）
+        use_char_inclusion = (
+            self.enable_character_inclusion
+            if enable_character_inclusion is None
+            else enable_character_inclusion
+        )
+        if use_char_inclusion:
+            resultlinesall = [apply_character_inclusion(text) for text in resultlinesall]
         
         # v1.2.1 Verticality check (Reverse text order if majority vertical)
         if alllinecnt > 0 and tatelinecnt / alllinecnt > 0.5:
@@ -348,8 +401,65 @@ class NDLOCREngine:
             }
             resjsonarray.append(jsonobj)
             
-        return {
+        # 表構造化の実行（有効かつモデルロード済みの場合）
+        use_table_structure = (
+            self.enable_table_structure
+            if enable_table_structure is None
+            else enable_table_structure
+        )
+        tables_result: Optional[List[Dict[str, Any]]] = None
+        table_markdowns: Optional[List[Dict[str, Any]]] = None
+        page_elem = root.find("PAGE")
+
+        if use_table_structure and page_elem is not None:
+            table_recognizer = self._ensure_table_recognizer()
+            page_xml = ET.tostring(page_elem, encoding="unicode")
+            _, raw_tables = infer_tables_from_page(
+                img,
+                {"page_xml": page_xml, "json_lines": resjsonarray},
+                table_recognizer,
+            )
+            tables_result = []
+            table_markdowns = []
+            for item in raw_tables:
+                cells = list(item.get("cells", []))
+                table_md = "" if item.get("error") else cells_to_markdown(cells)
+                tables_result.append({
+                    "table_index": int(item.get("table_index", 1)),
+                    "layout_bbox": [int(v) for v in item.get("layout_bbox", [])],
+                    "html": item.get("html"),
+                    "markdown": table_md,
+                    "num_cells": int(item.get("num_cells", len(cells))),
+                })
+                table_markdowns.append({
+                    "markdown": table_md,
+                    "layout_bbox": item.get("layout_bbox"),
+                    "table_index": item.get("table_index"),
+                    "source_table_indexes": item.get("source_table_indexes"),
+                })
+
+        # 構造化 Markdown の生成（有効時のみ適用）
+        use_rich_markdown = (
+            self.enable_rich_markdown
+            if enable_rich_markdown is None
+            else enable_rich_markdown
+        )
+        markdown_output = full_text
+        if use_rich_markdown and page_elem is not None:
+            markdown_styles = _normalize_markdown_styles(
+                getattr(self.detector, "markdown_styles", None)
+            )
+            rich_md = build_markdown_text_from_page(
+                page_elem,
+                table_markdowns=table_markdowns,
+                markdown_styles=markdown_styles,
+            )
+            if rich_md:
+                markdown_output = rich_md
+
+        response: Dict[str, Any] = {
             "text": full_text,
+            "markdown": markdown_output,
             "lines": resjsonarray,
             "img_info": {
                 "width": img_w,
@@ -357,3 +467,6 @@ class NDLOCREngine:
                 "name": img_name
             }
         }
+        if tables_result is not None:
+            response["tables"] = tables_result
+        return response

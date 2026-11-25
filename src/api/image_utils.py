@@ -5,7 +5,7 @@ import base64
 import binascii
 import asyncio
 import logging
-from typing import Optional
+from typing import Optional, Dict, Tuple
 from PIL import Image
 import PIL
 import pydantic
@@ -21,14 +21,13 @@ MAX_IMAGE_SIZE = int(os.getenv("MAX_IMAGE_SIZE", 10 * 1024 * 1024)) # Default 10
 MAX_BODY_SIZE = int(os.getenv("MAX_BODY_SIZE", 15 * 1024 * 1024))   # Default 15MB
 MAX_PIXELS = int(os.getenv("MAX_PIXELS", 100_000_000))            # Default 100MP
 
-async def _get_image_from_request(request: Request, file: Optional[UploadFile]):
+async def _get_image_and_options_from_request(
+    request: Request,
+    file: Optional[UploadFile],
+) -> Tuple[Image.Image, str, Dict[str, Optional[bool]]]:
     """
-    Internal helper to extract a PIL Image from the HTTP request.
-    Supports:
-    - Multipart file upload (via 'file' field)
-    - JSON body with base64 encoded image (via 'image' field)
-
-    Includes security checks for body size, file size, and image dimensions.
+    HTTP リクエストから PIL Image、ファイル名、および任意の OCR オプションを抽出する。
+    JSON ボディ経由の場合は character_inclusion / rich_markdown / table_structure も取得する。
     """
     import src.api.main as main_mod
 
@@ -38,6 +37,11 @@ async def _get_image_from_request(request: Request, file: Optional[UploadFile]):
 
     img = None
     filename = "image.jpg"
+    options: Dict[str, Optional[bool]] = {
+        "character_inclusion": None,
+        "rich_markdown": None,
+        "table_structure": None,
+    }
     try:
         if file:
             # Handle multipart/form-data
@@ -71,6 +75,11 @@ async def _get_image_from_request(request: Request, file: Optional[UploadFile]):
 
             body = json.loads(body_bytes)
             ocr_req = OCRRequest(**body)
+            options = {
+                "character_inclusion": ocr_req.character_inclusion,
+                "rich_markdown": ocr_req.rich_markdown,
+                "table_structure": ocr_req.table_structure,
+            }
             # Remove data URI prefix if present
             header, encoded = ocr_req.image.split(",", 1) if "," in ocr_req.image else (None, ocr_req.image)
             contents = await asyncio.to_thread(base64.b64decode, encoded)
@@ -96,4 +105,12 @@ async def _get_image_from_request(request: Request, file: Optional[UploadFile]):
     if img.width * img.height > max_pixels:
         raise HTTPException(status_code=400, detail="Image dimensions too large")
 
+    return img, filename, options
+
+
+async def _get_image_from_request(request: Request, file: Optional[UploadFile]):
+    """
+    既存呼び出し元との後方互換性を維持するためのラッパー関数。
+    """
+    img, filename, _ = await _get_image_and_options_from_request(request, file)
     return img, filename

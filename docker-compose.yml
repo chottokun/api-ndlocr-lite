@@ -5,6 +5,9 @@ services:
       - "8001:8000"
     environment:
       - PYTHONPATH=/home/appuser/app:/home/appuser/app/extern/ndlocr-lite/src
+    env_file:
+      - path: .env
+        required: false
     volumes:
       - .:/home/appuser/app
       - /home/appuser/app/.venv  # Anonymous volume to isolate .venv

@@ -14,12 +14,14 @@ import os
 import logging
 
 import time
+from dotenv import find_dotenv, load_dotenv
 from src.core.engine import NDLOCREngine
-from src.schemas.ocr import OCRResponse, OCRPage, OCRLine, OCRJobResponse, OCRJobResult
+from src.schemas.ocr import OCRResponse, OCRPage, OCRLine, OCRTable, OCRJobResponse, OCRJobResult
 from src.schemas.openai import ChatCompletionRequest, ChatCompletionResponse, ChatCompletionChoice, ChatCompletionChoiceMessage
 from src.api.job_store import InMemoryJobStore
 from src.api.image_utils import (
     _get_image_from_request,
+    _get_image_and_options_from_request,
     MAX_IMAGE_SIZE as MAX_IMAGE_SIZE,
     MAX_BODY_SIZE as MAX_BODY_SIZE,
     MAX_PIXELS as MAX_PIXELS,
@@ -37,9 +39,11 @@ def _engine_result_to_ocr_page(result: Dict[str, Any], index: int = 0) -> OCRPag
         result: Dictionary containing 'text', 'img_info', and 'lines' from the engine.
         index: Page index (defaults to 0 as currently single-page is supported).
     """
+    raw_tables = result.get("tables")
+    tables = [OCRTable(**table) for table in raw_tables] if raw_tables is not None else None
     return OCRPage(
         index=index,
-        markdown=result["text"],
+        markdown=result.get("markdown", result["text"]),
         width=result["img_info"]["width"],
         height=result["img_info"]["height"],
         lines=[
@@ -52,7 +56,8 @@ def _engine_result_to_ocr_page(result: Dict[str, Any], index: int = 0) -> OCRPag
                 isTextline=line.get("isTextline"),
                 class_index=line.get("class_index")
             ) for line in result["lines"]
-        ]
+        ],
+        tables=tables,
     )
 
 JOB_STORE_MAX_SIZE = int(os.getenv("JOB_STORE_MAX_SIZE", "1000"))
@@ -65,11 +70,22 @@ async def lifespan(app: FastAPI):
     Initializes the OCR engine (loading ONNX models) and job store on startup.
     Ensures graceful shutdown of engine resources (thread pools).
     """
+    # .env ファイルが存在する場合は読み込む（既に設定済みの環境変数は上書きしない）
+    load_dotenv(find_dotenv(usecwd=True), override=False)
     logger.info("Initializing NDLOCR Engine and Job Store...")
     # Initialize engine on CPU by default.
     # Models are loaded once and stored in app.state for sharing across requests.
     enable_tcy = os.getenv("ENABLE_TCY", "false").lower() == "true"
-    app.state.engine = NDLOCREngine(device="cpu", enable_tcy=enable_tcy)
+    enable_character_inclusion = os.getenv("ENABLE_CHARACTER_INCLUSION", "false").lower() == "true"
+    enable_rich_markdown = os.getenv("ENABLE_RICH_MARKDOWN", "false").lower() == "true"
+    enable_table_structure = os.getenv("ENABLE_TABLE_STRUCTURE", "false").lower() == "true"
+    app.state.engine = NDLOCREngine(
+        device="cpu",
+        enable_tcy=enable_tcy,
+        enable_character_inclusion=enable_character_inclusion,
+        enable_rich_markdown=enable_rich_markdown,
+        enable_table_structure=enable_table_structure,
+    )
     app.state.job_store = InMemoryJobStore(max_size=JOB_STORE_MAX_SIZE, ttl_seconds=JOB_STORE_TTL_SECONDS)
     yield
     logger.info("Shutting down...")
@@ -86,7 +102,59 @@ def get_engine(request: Request) -> Optional[NDLOCREngine]:
 def get_job_store(request: Request) -> Optional[InMemoryJobStore]:
     return getattr(request.app.state, "job_store", None)
 
-def process_ocr_job(job_id: str, img: Image.Image, filename: str, engine: NDLOCREngine, job_store: InMemoryJobStore):
+def _resolve_ocr_options(
+    query_character_inclusion: Optional[bool],
+    query_rich_markdown: Optional[bool],
+    query_table_structure: Optional[bool],
+    body_options: Optional[Dict[str, Optional[bool]]] = None,
+) -> Dict[str, Optional[bool]]:
+    """クエリパラメータ > JSON ボディ > サーバーデフォルト(.env) の優先順位でオプションを解決する。"""
+    body_options = body_options or {}
+    return {
+        "character_inclusion": (
+            query_character_inclusion
+            if query_character_inclusion is not None
+            else body_options.get("character_inclusion")
+        ),
+        "rich_markdown": (
+            query_rich_markdown
+            if query_rich_markdown is not None
+            else body_options.get("rich_markdown")
+        ),
+        "table_structure": (
+            query_table_structure
+            if query_table_structure is not None
+            else body_options.get("table_structure")
+        ),
+    }
+
+
+def _call_engine_ocr(
+    engine: NDLOCREngine,
+    img: Image.Image,
+    filename: str,
+    options: Optional[Dict[str, Optional[bool]]] = None,
+) -> Dict[str, Any]:
+    """オプション未指定時は従来通り位置引数のみで engine.ocr を呼び出し互換性を保つ。"""
+    if not options or all(value is None for value in options.values()):
+        return engine.ocr(img, filename)
+    return engine.ocr(
+        img,
+        filename,
+        enable_character_inclusion=options.get("character_inclusion"),
+        enable_rich_markdown=options.get("rich_markdown"),
+        enable_table_structure=options.get("table_structure"),
+    )
+
+
+def process_ocr_job(
+    job_id: str,
+    img: Image.Image,
+    filename: str,
+    engine: NDLOCREngine,
+    job_store: InMemoryJobStore,
+    options: Optional[Dict[str, Optional[bool]]] = None,
+):
     """
     Background worker function for asynchronous OCR processing.
     Updates the job status in the JobStore throughout the process.
@@ -103,7 +171,7 @@ def process_ocr_job(job_id: str, img: Image.Image, filename: str, engine: NDLOCR
     try:
         job.status = "processing"
         # Synchronous call to engine.ocr (run in background task thread)
-        result = engine.ocr(img, img_name=filename)
+        result = _call_engine_ocr(engine, img, filename, options)
         
         # Convert engine output to API schema
         page = _engine_result_to_ocr_page(result)
@@ -124,14 +192,20 @@ def process_ocr_job(job_id: str, img: Image.Image, filename: str, engine: NDLOCR
 async def ocr_endpoint(
     request: Request,
     file: Optional[UploadFile] = File(None),
+    character_inclusion: Optional[bool] = None,
+    rich_markdown: Optional[bool] = None,
+    table_structure: Optional[bool] = None,
     engine: NDLOCREngine = Depends(get_engine),
 ):
     """
     Synchronous OCR endpoint.
     Processes the provided image (file or base64) and returns results immediately.
     """
-    # Extract image from multipart/form-data or JSON body
-    img, filename = await _get_image_from_request(request, file)
+    # Extract image and optional parameters from multipart/form-data or JSON body
+    img, filename, body_options = await _get_image_and_options_from_request(request, file)
+    options = _resolve_ocr_options(
+        character_inclusion, rich_markdown, table_structure, body_options
+    )
     
     if engine is None:
         raise HTTPException(status_code=503, detail="Engine not initialized")
@@ -142,7 +216,7 @@ async def ocr_endpoint(
     try:
         # Run CPU-bound OCR processing in a thread pool to avoid blocking the event loop
         loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(None, engine.ocr, img, filename)
+        result = await loop.run_in_executor(None, _call_engine_ocr, engine, img, filename, options)
 
         if await request.is_disconnected():
             raise HTTPException(status_code=499, detail="Client closed connection")
@@ -161,6 +235,9 @@ async def create_ocr_job(
     background_tasks: BackgroundTasks,
     request: Request,
     file: Optional[UploadFile] = File(None),
+    character_inclusion: Optional[bool] = None,
+    rich_markdown: Optional[bool] = None,
+    table_structure: Optional[bool] = None,
     engine: NDLOCREngine = Depends(get_engine),
     job_store: InMemoryJobStore = Depends(get_job_store),
 ):
@@ -169,7 +246,10 @@ async def create_ocr_job(
     Accepts an image, initializes a background job, and returns a job_id for status polling.
     """
     # Extract image first to ensure it's valid before accepting the job
-    img, filename = await _get_image_from_request(request, file)
+    img, filename, body_options = await _get_image_and_options_from_request(request, file)
+    options = _resolve_ocr_options(
+        character_inclusion, rich_markdown, table_structure, body_options
+    )
     
     if await request.is_disconnected():
         raise HTTPException(status_code=499, detail="Client closed connection")
@@ -178,7 +258,7 @@ async def create_ocr_job(
     job_store.set(job_id, OCRJobResult(job_id=job_id, status="pending"))
     
     # Delegate processing to background task
-    background_tasks.add_task(process_ocr_job, job_id, img, filename, engine, job_store)
+    background_tasks.add_task(process_ocr_job, job_id, img, filename, engine, job_store, options)
     
     return OCRJobResponse(job_id=job_id, status="pending")
 
@@ -196,6 +276,9 @@ async def get_ocr_job(job_id: str, job_store: InMemoryJobStore = Depends(get_job
 async def openai_vision_endpoint(
     raw_request: Request,
     request: ChatCompletionRequest,
+    character_inclusion: Optional[bool] = None,
+    rich_markdown: Optional[bool] = None,
+    table_structure: Optional[bool] = None,
     engine: Optional[NDLOCREngine] = Depends(get_engine),
 ):
     """
@@ -235,13 +318,24 @@ async def openai_vision_endpoint(
             raise HTTPException(status_code=499, detail="Client closed connection")
 
         # Run OCR
+        options = _resolve_ocr_options(
+            character_inclusion,
+            rich_markdown,
+            table_structure,
+            {
+                "character_inclusion": request.character_inclusion,
+                "rich_markdown": request.rich_markdown,
+                "table_structure": request.table_structure,
+            },
+        )
         loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(None, engine.ocr, img, "openai_image.jpg")
+        result = await loop.run_in_executor(None, _call_engine_ocr, engine, img, "openai_image.jpg", options)
 
         if await raw_request.is_disconnected():
             raise HTTPException(status_code=499, detail="Client closed connection")
 
         # Format response
+        response_text = result.get("markdown", result["text"])
         return ChatCompletionResponse(
             id=f"chatcmpl-{uuid.uuid4()}",
             created=int(time.time()),
@@ -251,7 +345,7 @@ async def openai_vision_endpoint(
                     index=0,
                     message=ChatCompletionChoiceMessage(
                         role="assistant",
-                        content=result["text"],
+                        content=response_text,
                         tool_calls=[{
                             "id": f"call_{uuid.uuid4()}",
                             "type": "function",
@@ -266,8 +360,8 @@ async def openai_vision_endpoint(
             ],
             usage={
                 "prompt_tokens": 0, # Tokens are not really applicable here but kept for compatibility
-                "completion_tokens": len(result["text"]),
-                "total_tokens": len(result["text"])
+                "completion_tokens": len(response_text),
+                "total_tokens": len(response_text)
             }
         )
     except HTTPException:

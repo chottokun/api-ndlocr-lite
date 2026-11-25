@@ -24,6 +24,9 @@ class ChatCompletionRequest(BaseModel):
     model: str = "ndlocr-lite"
     messages: List[Union[ChatCompletionSystemMessage, ChatCompletionUserMessage]]
     stream: Optional[bool] = False
+    character_inclusion: Optional[bool] = None
+    rich_markdown: Optional[bool] = None
+    table_structure: Optional[bool] = None
 
 class ChatCompletionChoiceMessage(BaseModel):
     role: str = "assistant"

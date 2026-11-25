@@ -10,12 +10,20 @@ class OCRLine(BaseModel):
     isTextline: Optional[str] = None
     class_index: Optional[int] = None
 
+class OCRTable(BaseModel):
+    table_index: int
+    layout_bbox: List[int]
+    html: Optional[str] = None
+    markdown: Optional[str] = None
+    num_cells: int = 0
+
 class OCRPage(BaseModel):
     index: int
     markdown: str
     width: int
     height: int
     lines: List[OCRLine]
+    tables: Optional[List[OCRTable]] = None
 
 class OCRResponse(BaseModel):
     model: str
@@ -35,3 +43,6 @@ class OCRJobResult(BaseModel):
 class OCRRequest(BaseModel):
     image: str = Field(..., max_length=15 * 1024 * 1024) # Base64 encoded image (limit 15MB)
     model: Optional[str] = "ndlocr-lite"
+    character_inclusion: Optional[bool] = None
+    rich_markdown: Optional[bool] = None
+    table_structure: Optional[bool] = None
