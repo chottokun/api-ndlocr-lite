@@ -73,14 +73,19 @@ async def lifespan(app: FastAPI):
     # .env ファイルが存在する場合は読み込む（既に設定済みの環境変数は上書きしない）
     load_dotenv(find_dotenv(usecwd=True), override=False)
     logger.info("Initializing NDLOCR Engine and Job Store...")
-    # Initialize engine on CPU by default.
-    # Models are loaded once and stored in app.state for sharing across requests.
+    # Initialize engine on the device selected by the DEVICE env var
+    # ("cpu" by default, "cuda" for GPU builds). Models are loaded once
+    # and stored in app.state for sharing across requests.
+    device = os.getenv("DEVICE", "cpu").lower()
+    if device not in ("cpu", "cuda"):
+        logger.warning("Unknown DEVICE=%r; falling back to cpu", device)
+        device = "cpu"
     enable_tcy = os.getenv("ENABLE_TCY", "false").lower() == "true"
     enable_character_inclusion = os.getenv("ENABLE_CHARACTER_INCLUSION", "false").lower() == "true"
     enable_rich_markdown = os.getenv("ENABLE_RICH_MARKDOWN", "false").lower() == "true"
     enable_table_structure = os.getenv("ENABLE_TABLE_STRUCTURE", "false").lower() == "true"
     app.state.engine = NDLOCREngine(
-        device="cpu",
+        device=device,
         enable_tcy=enable_tcy,
         enable_character_inclusion=enable_character_inclusion,
         enable_rich_markdown=enable_rich_markdown,
