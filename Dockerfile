@@ -9,7 +9,8 @@ RUN apt-get update && apt-get install -y \
     libxrender-dev \
     git \
     curl \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && python -m pip install --no-cache-dir --upgrade "setuptools>=78.1.1" pip
 
 # Install uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
@@ -26,14 +27,14 @@ COPY --chown=appuser:appuser pyproject.toml uv.lock ./
 # Optional: also copy submodule's dependency file if needed, 
 # although normally top-level handles it.
 
-# Install dependencies strictly into /home/appuser/app/.venv
-RUN uv sync --frozen --no-install-project
+# Install dependencies strictly into /home/appuser/app/.venv (production only, no cache)
+RUN uv sync --frozen --no-dev --no-cache --no-install-project
 
 # Copy the rest of the project files
 COPY --chown=appuser:appuser . .
 
 # Final sync to install the project itself
-RUN uv sync --frozen
+RUN uv sync --frozen --no-dev --no-cache
 
 # Expose port
 EXPOSE 8000
@@ -42,4 +43,4 @@ EXPOSE 8000
 ENV PYTHONPATH="/home/appuser/app:/home/appuser/app/extern/ndlocr-lite/src"
 
 # Run the application
-CMD ["uv", "run", "uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["/home/appuser/app/.venv/bin/uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
